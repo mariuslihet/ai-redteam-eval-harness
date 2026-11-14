@@ -1,1 +1,0 @@
-"""Deliberately vulnerable simulation server."""
