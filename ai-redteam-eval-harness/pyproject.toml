@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-redteam-eval-harness"
+version = "0.2.0"
+description = "Offline procedural adversarial evaluation of local language models"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.7,<3", "httpx>=0.27,<1", "jsonschema>=4.21,<5", "rich>=13,<15"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "pytest-asyncio>=0.24,<2", "mypy>=1.11,<2", "ruff>=0.9,<1", "types-jsonschema"]
+transformers = ["transformers>=4.45,<6", "torch>=2.2", "lm-format-enforcer>=0.10,<1"]
+
+[project.scripts]
+redteam-eval = "redteam_eval.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+redteam_eval = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = ["local_llm: opt-in inference against an installed loopback local engine"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src/redteam_eval"]
+
+[[tool.mypy.overrides]]
+module = ["transformers.*", "lmformatenforcer.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP"]

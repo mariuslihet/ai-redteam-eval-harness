@@ -1,0 +1,22 @@
+{
+  "seed": 1729,
+  "cases_per_family": 1,
+  "max_turns": 2,
+  "concurrency": 1,
+  "max_tokens": 512,
+  "backend": {
+    "kind": "ollama", "model": "qwen2.5:7b-instruct-q4_K_M",
+    "endpoint": "http://127.0.0.1:11434", "timeout": 300
+  },
+  "attacker": {
+    "kind": "ollama", "model": "qwen2.5:7b-instruct-q4_K_M",
+    "endpoint": "http://127.0.0.1:11434", "timeout": 300
+  },
+  "judge": {
+    "kind": "ollama", "model": "qwen2.5:7b-instruct-q4_K_M",
+    "endpoint": "http://127.0.0.1:11434", "timeout": 300
+  },
+  "require_judge": true,
+  "providers": [{"name": "direct"}],
+  "guard": {"spotlight": true, "input_gate": true, "output_enforcer": true}
+}
