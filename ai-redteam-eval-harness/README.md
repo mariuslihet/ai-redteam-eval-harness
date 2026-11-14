@@ -15,13 +15,12 @@ simulation, latency jitter or injected rate limits are involved.
 ## Quick start
 
 ```powershell
-cd D:\PROIECTE\ai-redteam-eval-harness
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 
 # Real local model, attacker and judge; six paired scenarios, two attack turns.
 .\.venv\Scripts\python.exe -m redteam_eval --config examples/live-ollama.json `
-  --checkpoint checkpoints/live-verified-1729 --output reports/live-1729
+  --checkpoint checkpoints/my-run --output reports/my-run
 
 # Real model, already installed in a local Ollama instance. Attacker and judge
 # default to the same local backend/model, and can be selected independently.
@@ -55,6 +54,66 @@ provides an explicitly deterministic-only grading/search run against a real targ
 `--config examples/live-ollama.json` loads the full validated configuration; run overrides
 are rejected rather than silently ignored. Output, checkpoint and gate options still apply.
 
+## Model readiness, saved reports and regression comparisons
+
+Check the actual local engine, installed model, model digest and completion capability before
+starting a benchmark. `--probe` additionally makes a real inference request and checks an exact
+arithmetic answer. These checks never install models or substitute canned responses.
+
+```powershell
+.\.venv\Scripts\python.exe -m redteam_eval --doctor --probe `
+  --config examples/live-ollama.json --output reports/readiness
+```
+
+The readiness result is saved as `doctor.json`. Exit 0 means the checks passed, 1 means the
+model needs attention, and 2 means the command/configuration failed. OpenAI-compatible engines
+are checked through their local model listing; Transformers metadata checks inspect local files
+and installed dependencies without loading weights. Use `--probe` to verify actual generation.
+
+Regenerate an audit and change its security thresholds from saved, measured results without
+loading a model or requesting new completions:
+
+```powershell
+.\.venv\Scripts\python.exe -m redteam_eval `
+  --report-from reports/my-run/telemetry.json --max-asr 0.1 --max-frr 0.2 `
+  --output reports/reviewed
+```
+
+The original telemetry is preserved. A different output directory is required. Saved thresholds
+and confidence-gate settings are retained unless explicitly overridden, and cached summaries
+are recomputed from recorded turns. `--no-confidence-gate` explicitly selects point estimates.
+Archives must contain every generated threat/control/provider pair, consistent model metadata,
+valid turn lineage, and matching baseline/hardened prompt plans. Incomplete or inconsistent
+archives fail instead of producing optimistic results. This validates structural consistency,
+not cryptographic authenticity or whether a third party edited recorded verdicts.
+
+Compare a new run with a previous run, or compare two existing measured archives:
+
+```powershell
+.\.venv\Scripts\python.exe -m redteam_eval --config examples/live-ollama.json `
+  --compare-to reports/my-run/telemetry.json --output reports/candidate
+
+.\.venv\Scripts\python.exe -m redteam_eval `
+  --report-from reports/candidate/telemetry.json `
+  --compare-to reports/my-run/telemetry.json --output reports/comparison `
+  --max-asr-increase 0 --max-frr-increase 0 --max-violation-increase 0
+```
+
+Regression thresholds default to zero tolerated increase and return exit 1 on failure. Compare
+hardened outcomes by default, or select `--compare-mode baseline`. `regression.json`,
+`regression.md` and standalone `regression.html` contain matched changes, confidence intervals,
+changed scenario references and gate failures. Absolute security gates still apply separately.
+The final status JSON includes `inference_requested: false` for archive-only operations.
+
+Runs must share generated scenarios, seed, providers, search/token budgets, attacker and judge
+configurations, and grading precedence. Target models and defense settings may change.
+When comparing different targets, configure the same explicit attacker and judge models for
+both runs to keep search and scoring comparable. Adaptive follow-ups can differ as the target's
+behavior changes; this compares matched search experiments, not identical recorded follow-ups.
+Delta intervals resample scenario clusters across providers. With `--confidence-gate`, a
+regression fails when its upper delta bound exceeds the tolerated increase. Timing is not
+gated because engine load and hardware scheduling can change between runs.
+
 ## Architecture
 
 ```text
@@ -82,6 +141,7 @@ seed -> synthesis -> matched threat/control scenarios
 | `scanning.py`, `policy.py`, `evaluation.py` | Programmatic evidence and rubric-constrained semantic consensus |
 | `defense.py` | Pluggable spotlight, input and output middleware |
 | `runner.py`, `checkpoint.py` | Paired concurrency, retries, trajectories, atomic resume |
+| `archive.py`, `regression.py`, `doctor.py` | Saved-run validation, paired regression gates, actual local model readiness |
 | `audit.py`, `reporting.py`, `cli.py` | Statistics, observed-response gallery, review queue, CSV and CI thresholds |
 
 Extension contracts are `Backend`, `Target`, `Mutator`, `Scanner`, `Evaluator` and `Guardrail`.

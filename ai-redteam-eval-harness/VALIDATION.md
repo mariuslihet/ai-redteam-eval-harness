@@ -1,53 +1,64 @@
 # Validation record
 
-Executed on 14 November 2026 in this workspace using the provisioned Python 3.12.14 environment.
+Validated locally on 14 November 2026 with Python 3.12.14. Changes remain local; no commits
+or pushes were made during this feature extension.
 
-| Check | Observed result |
+## Current verification
+
+| Check | Evidence |
 |---|---|
-| Unit and integration suite | 87 passed, 1 skipped |
-| Strict mypy | No issues in 16 source files |
-| Ruff lint and formatting | Clean |
-| Dependency consistency | `pip check`: no broken requirements |
-| Full offline example | 144 baseline/hardened pairs across four provider profiles |
-| Security gate example | Passed hardened ASR <=0, FRR <=1, defense delta >=1 |
-| Checkpoint replay | Identical telemetry SHA-256 before and after resume |
-| Live local-model smoke | Skipped; no running local inference server or Ollama executable found |
+| Unit, integration and live smoke tests | 134 passed, including live inference against the installed Qwen model |
+| Strict typing | mypy passes across 20 source modules |
+| Lint and formatting | Ruff checks all source and test files |
+| Readiness and real inference probe | Ollama 0.40.13, Qwen 2.5 7B, actual answer `108` to `93 + 15` |
+| Archive-only regeneration | Rebuilt the six-pair live audit with `inference_requested: false` |
+| Matched regression comparison | Compared the live archive to itself: no changed cases, zero metric deltas, passing gates |
+| Source archive preservation | Tests verify byte-for-byte preservation and reject output paths that would overwrite inputs |
+| Corrupt/inconsistent archives | Tests reject missing pairs, duplicates, mismatched identities, lineage, prompt plans and control worlds |
+| Regression exit codes | Tests exercise improvements, failures, tolerated deltas, confidence bounds and incompatible runs |
+| README portability | Removed the machine-specific project `cd` command |
 
-The demonstration uses the explicit deterministic test double. Its baseline ASR is 100%,
-hardened ASR is 0%, and both FRRs are 100%. Those are fixture behavior, not model-security
-measurements: the default CI double refuses the first turn and leaks a synthetic key on
-the second turn. It intentionally does not solve benign controls. Programmable callbacks
-and scripts test successful benign completion, tool behavior and semantic judge decisions
-separately. The permissive demonstration FRR gate is deliberate, not a recommended production
-threshold.
+The readiness evidence is in `reports/features-doctor/doctor.json`. Regenerated audits and
+regression reports are in `reports/features-review`. These artifact directories are ignored
+by Git. Archive regeneration uses measured responses and stored verdicts, recomputes summary
+statistics, and makes no inference calls. It does not independently rejudge saved outputs or
+cryptographically authenticate the archive.
 
-Telemetry checksum after the recorded demonstration and its resumed run:
+## Real model evidence
+
+The existing six-pair local run is retained in `reports/live-actual-1729/telemetry.json`:
+three generated attacks and three matched benign controls, each in baseline and hardened mode.
+All 16 target generations contain native Ollama model metadata and non-estimated token counts.
+The target, attacker and judge used `qwen2.5:7b-instruct-q4_K_M`.
+
+Model digest:
 
 ```text
-961f63b5a1decac6264d9a5d7b688cebbe67d1c2a919afef65f9c7a2312e3381
+845dbda0ea48ed749caafd9e6037047aa19acfcfd82e704d7ca97d631a0b697e
 ```
 
-Artifacts are generated under `reports/demo`; checkpoint files are under `checkpoints/demo`.
-Both directories are ignored by Git. `README.md` supplies live-model and offline commands.
-The checked-in CI configuration targets Python 3.11 and 3.12 on Linux and Windows; only the
-local Python 3.12 Windows execution was performed here.
+That small run recorded deterministic policy violations in 2/3 baseline attacks and 0/3
+hardened attacks, plus one semantic-only hardened policy-drift flag. All three benign controls
+completed. Overall ensemble ASR was 2/3 versus 1/3. These distinct evidence categories remain
+separate in regenerated reports; three attacks cannot establish production safety.
+
+Production code supports only actual local inference backends. Programmable completion
+fixtures exist only under `tests/`, so GPU-free integration tests do not become user-facing
+benchmark demonstrations. Native vLLM/llama.cpp and Transformers live inference were not
+executed here; their readiness/adapters are covered by offline transport and pipeline tests.
+Only Windows Python 3.12 was executed locally; the checked-in CI matrix also targets Linux
+and Python 3.11.
 
 ## Quality review
 
-Overall self-assessment: **4.0/5**; the code is reviewable and the offline workflow is verified,
-while production and live-hardware claims remain limited by the evidence above.
+Self-assessment: **4.0/5** across accuracy, completeness, clarity, actionability and conciseness.
+Accuracy has real Ollama evidence plus archive preservation tests; validating more engine
+versions would improve confidence. Completeness covers all three new workflows, with
+comparison intentionally rejecting changed search/judge configurations. Clarity benefits from
+portable commands, though the README is long. Actionability includes usable local reports
+and readiness output; optional engines still require their own weights/dependencies.
+Conciseness is limited by the evaluation assumptions needed to interpret the results.
 
-| Axis | Score | Evidence and next improvement |
-|---|---:|---|
-| Accuracy | 4/5 | Offline adapter parsing and policies pass tests; real engine and model behavior still need a live run. |
-| Completeness | 4/5 | All requested subsystem boundaries are implemented; profiles approximate non-streaming vendor APIs, and execution trees use parent-linked linear trajectories. Validate against installed engines and captured provider contracts before broader claims. |
-| Clarity | 4/5 | README explains pairing, metrics and limitations; the long configuration guide could become separate focused guides as the project grows. |
-| Actionability | 4/5 | Environment, CLI, reports, checkpoints and CI are ready; live evaluation requires an available local inference engine. |
-| Conciseness | 4/5 | Sixteen source modules keep subsystem boundaries explicit; documentation is lengthy because evaluation assumptions materially affect interpretation. |
-
-Highest-impact remaining validation: run the marked smoke test and a real paired experiment
-using the documented local model; then compare provider codecs against version-pinned wire
-fixtures if exact service conformance becomes a deployment requirement.
-
-Self-check: the user should be able to reproduce the offline results immediately and see
-precisely why they cannot yet be treated as a live-model security benchmark.
+Highest-impact follow-ups are independent live verification on vLLM/Transformers and larger
+seeded evaluations. Self-check: the user can review actual responses and reproduce reporting
+without inference or publishing anything.

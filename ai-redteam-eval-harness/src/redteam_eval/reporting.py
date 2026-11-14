@@ -9,6 +9,7 @@ import statistics
 from pathlib import Path
 from typing import Any
 
+from redteam_eval import __version__
 from redteam_eval.audit import write_audit_exports
 from redteam_eval.checkpoint import atomic_json
 from redteam_eval.models import Model, PairResult, RunConfig, Thresholds, Trajectory, derive_seed
@@ -310,6 +311,7 @@ def write_reports(
     failures = gate(summary, thresholds)
     report = {
         "format_version": 1,
+        "package_version": __version__,
         "config": config.model_dump(mode="json"),
         "summary": summary,
         "thresholds": thresholds.model_dump(mode="json"),
