@@ -89,6 +89,18 @@ class HTTPBackend:
             follow_redirects=False,
             transport=self.transport,
         ) as client:
+            verified_digest = None
+            if self.config.expected_digest:
+                tags = await client.get(self.url + "/api/tags")
+                tags.raise_for_status()
+                selected = next(
+                    (m for m in tags.json()["models"] if m.get("name") == self.config.model), None
+                )
+                verified_digest = selected.get("digest") if selected else None
+                if verified_digest != self.config.expected_digest:
+                    raise ValueError(
+                        "Installed model digest differs from the pinned model; inference was not requested"
+                    )
             result = await client.post(self.url + path, json=body)
             result.raise_for_status()
             data = result.json()
@@ -97,7 +109,9 @@ class HTTPBackend:
             usage = Usage(
                 input_tokens=data.get("prompt_eval_count", 0),
                 output_tokens=data.get("eval_count", 0),
-                estimated="prompt_eval_count" not in data,
+                estimated=any(
+                    type(data.get(key)) is not int for key in ("prompt_eval_count", "eval_count")
+                ),
             )
         else:
             message = data["choices"][0]["message"]
@@ -105,7 +119,10 @@ class HTTPBackend:
             usage = Usage(
                 input_tokens=counts.get("prompt_tokens", 0),
                 output_tokens=counts.get("completion_tokens", 0),
-                estimated=not counts,
+                estimated=any(
+                    type(counts.get(key)) is not int
+                    for key in ("prompt_tokens", "completion_tokens")
+                ),
             )
         calls, errors = parse_calls(message.get("tool_calls", []))
         text = message.get("content") or ""
@@ -123,6 +140,7 @@ class HTTPBackend:
                 "body": body,
             },
             response_envelope=data,
+            model_digest=verified_digest,
         )
 
 
@@ -197,6 +215,9 @@ class TransformersBackend:
                 output_tokens=len(tokenizer.encode(original)),
             ),
             latency_ms=(time.perf_counter() - start) * 1000,
+            finish_reason="token_budget"
+            if len(tokenizer.encode(original)) >= request.max_tokens
+            else None,
         )
 
     async def generate(self, request: Request) -> Response:

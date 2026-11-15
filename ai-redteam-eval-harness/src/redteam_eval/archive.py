@@ -21,10 +21,14 @@ class RunArchive(Model):
     gate_failures: list[str]
     inference_backend: str
     target_model: str
+    execution_mode: Literal["adaptive", "recorded_replay"] | None = None
     results: list[PairResult] = Field(min_length=1)
 
     @model_validator(mode="after")
     def complete_consistent_run(self) -> RunArchive:
+        expected_mode = "recorded_replay" if self.config.replay_plan_digest else "adaptive"
+        if self.execution_mode is not None and self.execution_mode != expected_mode:
+            raise ValueError("Archive execution mode does not match its replay configuration")
         if (
             self.inference_backend != self.config.backend.kind
             or self.target_model != self.config.backend.model
@@ -77,8 +81,16 @@ class RunArchive(Model):
                         raise ValueError("Archive turn lineage is inconsistent")
                     parent = turn.id
                     turn_ids.add(turn.id)
+                    if turn.user_messages and "\n".join(turn.user_messages) != turn.prompt:
+                        raise ValueError(
+                            "Recorded user-message segments differ from the turn prompt"
+                        )
             if [t.prompt for t in pair.baseline.turns] != [t.prompt for t in pair.hardened.turns]:
                 raise ValueError("Baseline and hardened attack plans do not match")
+            if [t.user_messages for t in pair.baseline.turns] != [
+                t.user_messages for t in pair.hardened.turns
+            ]:
+                raise ValueError("Baseline and hardened message segmentation does not match")
         if any(value != profiles for value in scenario_profiles.values()):
             raise ValueError("Archive is missing a provider for a generated scenario")
         for world in matched_worlds.values():

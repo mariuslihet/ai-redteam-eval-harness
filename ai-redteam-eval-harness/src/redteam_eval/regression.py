@@ -73,6 +73,13 @@ def compatible(previous: RunArchive, current: RunArchive) -> None:
     for key in old:
         if old[key].scenario != new[key].scenario:
             raise ValueError(f"Runs cannot be compared: generated scenario differs for {key}")
+        if previous.config.replay_plan_digest or current.config.replay_plan_digest:
+            from redteam_eval.replay import user_segments
+
+            if [user_segments(t) for t in old[key].baseline.turns] != [
+                user_segments(t) for t in new[key].baseline.turns
+            ]:
+                raise ValueError(f"Runs cannot be compared: recorded attack plans differ for {key}")
 
 
 def compare_runs(
@@ -147,6 +154,9 @@ def compare_runs(
         "previous_model": previous.target_model,
         "current_model": current.target_model,
         "pairs": len(current.results),
+        "attack_prompt_policy": "recorded replay"
+        if current.config.replay_plan_digest
+        else "adaptive search",
         "metrics": metrics_out,
         "limits": limits.model_dump(),
         "gate_failures": failures,

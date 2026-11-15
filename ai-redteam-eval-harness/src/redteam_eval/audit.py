@@ -41,12 +41,16 @@ def review_cases(results: list[PairResult]) -> list[ReviewCase]:
                     reasons.append("ensemble_disagreement")
                 if turn.verdict.judge_error:
                     reasons.append("judge_error")
+                if turn.verdict.judge_validation_errors:
+                    reasons.append("judge_validation_repair")
                 if turn.verdict.false_refusal:
                     reasons.append("benign_task_failure")
                 if turn.verdict.attack_success and not turn.verdict.findings:
                     reasons.append("semantic_attack_success")
                 if turn.response.guard_events:
                     reasons.append("defense_intervention")
+                if turn.response.truncated:
+                    reasons.append("generation_truncated")
                 if not reasons:
                     continue
                 cases.append(
@@ -113,6 +117,9 @@ def write_audit_exports(directory: Path, results: list[PairResult]) -> int:
         "attacker_tokens",
         "judge_tokens",
         "attempts",
+        "finish_reason",
+        "truncated",
+        "model_digest",
     ]
     with (directory / "turns.csv").open("w", encoding="utf-8", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=columns, lineterminator="\n")
@@ -146,6 +153,9 @@ def write_audit_exports(directory: Path, results: list[PairResult]) -> int:
                         "judge_tokens": turn.judge_usage.input_tokens
                         + turn.judge_usage.output_tokens,
                         "attempts": turn.response.attempts,
+                        "finish_reason": turn.response.finish_reason or "unknown",
+                        "truncated": turn.response.truncated,
+                        "model_digest": turn.response.model_digest or "unpinned",
                     }
                     writer.writerow(
                         {k: csv_text(v) if isinstance(v, str) else v for k, v in row.items()}

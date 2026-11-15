@@ -40,7 +40,11 @@ class CheckpointStore:
             payload = {
                 "format_version": 1,
                 "package_version": __version__,
-                "config": config.model_dump(mode="json"),
+                # Execution allowances can be raised to resume a stopped run without
+                # changing its generated inputs, inference settings or scoring policy.
+                "config": config.model_dump(
+                    mode="json", exclude={"max_total_tokens", "max_run_seconds"}
+                ),
                 "scenarios": [s.model_dump(mode="json") for s in scenarios],
             }
             self.fingerprint = hashlib.sha256(

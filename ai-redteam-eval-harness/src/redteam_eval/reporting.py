@@ -99,7 +99,15 @@ def trace_metrics(traces: list[Trajectory]) -> dict[str, Any]:
         "estimated_token_turns": sum(t.response.usage.estimated for t in turns),
         "disagreements": sum(t.verdict.disagreement for t in turns),
         "judge_errors": sum(t.verdict.judge_error is not None for t in turns),
+        "judge_repaired_turns": sum(
+            bool(t.verdict.judge_validation_errors) and t.verdict.semantic is not None
+            for t in turns
+        ),
         "turns": len(turns),
+        "truncation_rate": wilson(
+            sum(t.response.truncated for t in turns), len(turns)
+        ).model_dump(),
+        "unknown_finish_reason_turns": sum(t.response.finish_reason is None for t in turns),
     }
 
 
@@ -167,7 +175,11 @@ def summarize(results: list[PairResult], seed: int) -> dict[str, Any]:
 def gate(summary: dict[str, Any], thresholds: Thresholds) -> list[str]:
     failures = []
     hard = summary["hardened"]
-    for metric, limit in (("asr", thresholds.max_asr), ("frr", thresholds.max_frr)):
+    for metric, limit in (
+        ("asr", thresholds.max_asr),
+        ("frr", thresholds.max_frr),
+        ("truncation_rate", thresholds.max_truncation_rate),
+    ):
         if not hard[metric]["trials"]:
             failures.append(f"{metric}: no observations")
             continue
@@ -192,6 +204,7 @@ def executive_markdown(summary: dict[str, Any], failures: list[str]) -> str:
         ("frr", "FRR"),
         ("deterministic_violation_rate", "Deterministic attack violations"),
         ("semantic_only_success_rate", "Semantic-only attack flags"),
+        ("truncation_rate", "Token-limit truncation rate"),
     ):
         values = []
         for mode in ("baseline", "hardened"):
@@ -283,6 +296,10 @@ def response_gallery(results: list[PairResult]) -> str:
             for turn in trace.turns:
                 cards.append(f"<p>Turn {turn.depth}: {html.escape(turn.verdict.outcome)}</p>")
                 cards.append(f"<pre>{html.escape(turn.response.text)}</pre>")
+                if turn.response.truncated:
+                    cards.append(
+                        "<p>Generation reached its token limit; the response may be incomplete.</p>"
+                    )
                 if turn.verdict.findings:
                     cards.append(
                         f"<p>Deterministic findings: {html.escape('; '.join(turn.verdict.findings))}</p>"
@@ -318,10 +335,27 @@ def write_reports(
         "gate_failures": failures,
         "inference_backend": config.backend.kind,
         "target_model": config.backend.model,
+        "execution_mode": "recorded_replay" if config.replay_plan_digest else "adaptive",
         "results": [p.model_dump(mode="json") for p in results],
     }
     atomic_json(directory / "telemetry.json", report)
     markdown = executive_markdown(summary, failures)
+    execution = (
+        "Recorded attack replay with fresh target/judge inference"
+        if config.replay_plan_digest
+        else "Adaptive real-model evaluation"
+    )
+    provenance = (
+        f"Target model: {config.backend.model}\n\nExecution: {execution}\n\n"
+        f"Pinned target digest: {config.backend.expected_digest or 'not configured'}\n\n"
+    )
+    if config.replay_plan_digest:
+        provenance += f"Replay plan digest: {config.replay_plan_digest}\n\n"
+    markdown = markdown.replace(
+        "# Local adversarial evaluation audit\n\n",
+        "# Local adversarial evaluation audit\n\n" + provenance,
+        1,
+    )
     (directory / "audit.md").write_text(markdown, encoding="utf-8")
     svg = svg_matrix(summary)
     (directory / "comparison.svg").write_text(svg, encoding="utf-8")

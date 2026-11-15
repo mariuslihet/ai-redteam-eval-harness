@@ -100,6 +100,26 @@ class Response(Model):
     raw_text: str | None = None
     raw_tool_calls: list[ToolCall] | None = None
     attempts: int = 1
+    finish_reason: str | None = None
+    truncated: bool = False
+    model_digest: str | None = None
+
+    @model_validator(mode="after")
+    def native_finish_metadata(self) -> Response:
+        # Backfill metadata from older direct-engine archives without changing their text.
+        reason = self.finish_reason
+        if reason is None:
+            native = self.response_envelope
+            if isinstance(native.get("done_reason"), str):
+                reason = native["done_reason"]
+            elif isinstance(native.get("choices"), list) and native["choices"]:
+                choice = native["choices"][0]
+                if isinstance(choice, dict) and isinstance(choice.get("finish_reason"), str):
+                    reason = choice["finish_reason"]
+        object.__setattr__(self, "finish_reason", reason)
+        if reason in ("length", "max_tokens", "token_budget"):
+            object.__setattr__(self, "truncated", True)
+        return self
 
 
 class Backend(Protocol):
@@ -128,6 +148,8 @@ class Verdict(Model):
     disagreement: bool = False
     judge_error: str | None = None
     confidence: float = Field(default=1, ge=0, le=1)
+    judge_outputs: list[str] = Field(default_factory=list)
+    judge_validation_errors: list[str] = Field(default_factory=list)
 
 
 class Turn(Model):
@@ -145,6 +167,7 @@ class Turn(Model):
     judge_latency_ms: float = 0
     strategy_score: float = 0
     attacker_outputs: list[str] = Field(default_factory=list)
+    user_messages: list[str] = Field(default_factory=list)
 
 
 class Trajectory(Model):
@@ -168,6 +191,13 @@ class BackendConfig(Model):
     model: str = "qwen2.5:7b-instruct-q4_K_M"
     endpoint: str = "http://127.0.0.1:11434"
     timeout: float = Field(default=120, gt=0)
+    expected_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def pin_supported_engine(self) -> BackendConfig:
+        if self.expected_digest and self.kind != "ollama":
+            raise ValueError("Model digest pinning currently requires the Ollama backend")
+        return self
 
 
 class ProviderProfile(Model):
@@ -207,6 +237,9 @@ class RunConfig(Model):
     guard: GuardConfig = Field(default_factory=GuardConfig)
     deterministic_precedence: bool = True
     require_judge: bool = False
+    replay_plan_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    max_total_tokens: int | None = Field(default=None, gt=0)
+    max_run_seconds: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def unique_profiles(self) -> RunConfig:
@@ -223,6 +256,7 @@ class Thresholds(Model):
     max_frr: float = Field(default=1, ge=0, le=1)
     min_defense_delta: float = Field(default=-1, ge=-1, le=1)
     use_upper_ci: bool = False
+    max_truncation_rate: float = Field(default=1, ge=0, le=1)
 
 
 def derive_seed(seed: int, *parts: object) -> int:

@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from redteam_eval.archive import RunArchive, load_archive
+from redteam_eval.campaign import CampaignSpec, run_campaign
 from redteam_eval.checkpoint import atomic_json
 from redteam_eval.doctor import diagnose
 from redteam_eval.models import BackendConfig, ProviderProfile, RunConfig, Thresholds
@@ -21,6 +22,7 @@ from redteam_eval.regression import (
     compatible_configs,
     write_regression,
 )
+from redteam_eval.replay import plan_digest
 from redteam_eval.reporting import gate, summarize, write_reports
 from redteam_eval.runner import Runner
 
@@ -37,6 +39,11 @@ def parser() -> argparse.ArgumentParser:
     source.add_argument(
         "--doctor", action="store_true", help="Check configured local engine and model readiness"
     )
+    source.add_argument(
+        "--replay-from",
+        type=Path,
+        help="Replay recorded attack messages with fresh real target/judge inference",
+    )
     p.add_argument(
         "--probe",
         action="store_true",
@@ -52,7 +59,19 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--backend", choices=("ollama", "openai", "transformers"))
     p.add_argument("--model")
     p.add_argument("--endpoint")
+    p.add_argument("--model-digest", help="Expected installed Ollama model SHA-256 digest")
     p.add_argument("--seed", type=int)
+    p.add_argument(
+        "--seeds", nargs="+", type=int, help="Run a campaign across distinct seeds, sequentially"
+    )
+    p.add_argument(
+        "--max-total-tokens",
+        type=int,
+        help="Observed token allowance per run, including target/attacker/judge and restored pairs",
+    )
+    p.add_argument(
+        "--max-run-seconds", type=float, help="Cooperative wall-time allowance per run/seed"
+    )
     p.add_argument("--cases-per-family", type=int)
     p.add_argument("--max-turns", type=int)
     p.add_argument("--concurrency", type=int)
@@ -73,6 +92,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--max-asr", type=float)
     p.add_argument("--max-frr", type=float)
     p.add_argument("--min-defense-delta", type=float)
+    p.add_argument("--max-truncation-rate", type=float)
     p.add_argument(
         "--confidence-gate",
         action=argparse.BooleanOptionalAction,
@@ -87,6 +107,7 @@ RUN_KEYS = (
     "backend",
     "model",
     "endpoint",
+    "model_digest",
     "seed",
     "cases_per_family",
     "max_turns",
@@ -120,6 +141,7 @@ def build_config(args: argparse.Namespace) -> RunConfig:
         model=args.model or "qwen2.5:7b-instruct-q4_K_M",
         endpoint=args.endpoint
         or ("http://127.0.0.1:8080" if args.backend == "openai" else "http://127.0.0.1:11434"),
+        expected_digest=args.model_digest,
     )
     values = {
         k: getattr(args, k)
@@ -141,11 +163,58 @@ def build_config(args: argparse.Namespace) -> RunConfig:
         }
     )
     if not args.algorithmic_attacker:
-        config.attacker = backend.model_copy(update={"model": args.attacker_model or backend.model})
+        red_model = args.attacker_model or backend.model
+        config.attacker = backend.model_copy(
+            update={
+                "model": red_model,
+                "expected_digest": backend.expected_digest if red_model == backend.model else None,
+            }
+        )
     if not args.no_judge:
-        config.judge = backend.model_copy(update={"model": args.judge_model or backend.model})
+        judge_model = args.judge_model or backend.model
+        config.judge = backend.model_copy(
+            update={
+                "model": judge_model,
+                "expected_digest": backend.expected_digest
+                if judge_model == backend.model
+                else None,
+            }
+        )
     config.require_judge = args.require_judge
     return RunConfig.model_validate(config.model_dump())
+
+
+def replay_config(args: argparse.Namespace, recorded: RunArchive) -> RunConfig:
+    if args.config:
+        config = build_config(args)
+    else:
+        allowed = {"backend", "model", "endpoint", "model_digest", "concurrency", "retries"}
+        if any(getattr(args, name) is not None for name in RUN_KEYS if name not in allowed) or (
+            args.algorithmic_attacker or args.no_judge or args.require_judge
+        ):
+            raise ValueError(
+                "Replay inherits the saved suite, attack/token budgets and judge; use a full --config for other settings"
+            )
+        config = recorded.config.model_copy(deep=True)
+        backend = config.backend.model_dump()
+        changed_model = args.model is not None and args.model != config.backend.model
+        changed_kind = args.backend is not None and args.backend != config.backend.kind
+        if changed_model or changed_kind:
+            backend["expected_digest"] = None
+        for flag, field in (
+            ("backend", "kind"),
+            ("model", "model"),
+            ("endpoint", "endpoint"),
+            ("model_digest", "expected_digest"),
+        ):
+            if getattr(args, flag) is not None:
+                backend[field] = getattr(args, flag)
+        config.backend = BackendConfig.model_validate(backend)
+        for name in ("concurrency", "retries"):
+            if getattr(args, name) is not None:
+                setattr(config, name, getattr(args, name))
+    config.replay_plan_digest = plan_digest(recorded)
+    return config
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -159,7 +228,24 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--probe requires --doctor")
         if args.doctor and (args.checkpoint or args.compare_to):
             raise ValueError("--doctor cannot use --checkpoint or --compare-to")
+        if args.seeds and (
+            args.seed is not None
+            or args.report_from
+            or args.replay_from
+            or args.doctor
+            or args.compare_to
+        ):
+            raise ValueError(
+                "--seeds cannot combine with --seed, archive/replay, doctor or run comparison modes"
+            )
+        if (args.report_from or args.doctor) and (
+            args.max_total_tokens is not None or args.max_run_seconds is not None
+        ):
+            raise ValueError(
+                "Execution allowances apply to inference runs, not saved-report or readiness operations"
+            )
         source_archive = None
+        replay_archive = load_archive(args.replay_from) if args.replay_from else None
         if args.report_from:
             if args.config or args.checkpoint or has_run_overrides(args):
                 raise ValueError(
@@ -167,8 +253,17 @@ def main(argv: list[str] | None = None) -> int:
                 )
             source_archive = load_archive(args.report_from)
             config = source_archive.config
+        elif replay_archive:
+            config = replay_config(args, replay_archive)
         else:
             config = build_config(args)
+        for name in ("max_total_tokens", "max_run_seconds"):
+            if getattr(args, name) is not None:
+                setattr(config, name, getattr(args, name))
+        if config.replay_plan_digest and not (source_archive or replay_archive):
+            raise ValueError(
+                "A replay-configured run requires --replay-from with the recorded archive"
+            )
         if args.doctor:
             diagnosis = asyncio.run(diagnose(config.backend, probe=args.probe, seed=config.seed))
             args.output.mkdir(parents=True, exist_ok=True)
@@ -180,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
                 console.print(issue, markup=False)
             print(diagnosis.model_dump_json())
             return 0 if diagnosis.healthy else 1
-        for source_path in (args.report_from, args.compare_to):
+        for source_path in (args.report_from, args.compare_to, args.replay_from):
             if source_path and source_path.resolve() == (args.output / "telemetry.json").resolve():
                 raise ValueError(
                     "Choose a separate output directory to preserve the input telemetry archive"
@@ -190,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
             compatible_configs(previous.config, config)
         saved_thresholds = source_archive.thresholds if source_archive else Thresholds()
         threshold_values = saved_thresholds.model_dump()
-        for name in ("max_asr", "max_frr", "min_defense_delta"):
+        for name in ("max_asr", "max_frr", "min_defense_delta", "max_truncation_rate"):
             if getattr(args, name) is not None:
                 threshold_values[name] = getattr(args, name)
         if args.confidence_gate is not None:
@@ -209,11 +304,37 @@ def main(argv: list[str] | None = None) -> int:
             or args.compare_mode != "hardened"
         ):
             raise ValueError("Regression limits and --compare-mode require --compare-to")
-        results = (
-            source_archive.results
-            if source_archive
-            else asyncio.run(Runner(config).run(args.checkpoint))
-        )
+        if args.seeds:
+            record = asyncio.run(
+                run_campaign(
+                    config, CampaignSpec(seeds=args.seeds), thresholds, args.output, args.checkpoint
+                )
+            )
+            console.print(f"Campaign reports: {args.output.resolve()}")
+            for failure in record.gate_failures:
+                console.print(f"Gate failed: {failure}", markup=False)
+            print(
+                json.dumps(
+                    {
+                        "status": "fail" if record.gate_failures else "pass",
+                        "seeds": record.seeds,
+                        "completed_seeds": len(record.seed_results),
+                        "inference_requested": True,
+                    }
+                )
+            )
+            return 1 if record.gate_failures else 0
+        if source_archive:
+            results = source_archive.results
+        else:
+            runner = Runner(config)
+            try:
+                results = asyncio.run(runner.run(args.checkpoint, replay=replay_archive))
+            finally:
+                args.output.mkdir(parents=True, exist_ok=True)
+                atomic_json(
+                    args.output / "execution.json", runner.budget.snapshot().model_dump(mode="json")
+                )
         comparison = None
         if previous:
             # Validate compatibility before overwriting any output artifacts.
@@ -256,6 +377,7 @@ def main(argv: list[str] | None = None) -> int:
                     "defense_delta": summary["defense_delta"]["delta"],
                     "inference_requested": source_archive is None,
                     "comparison": comparison is not None,
+                    "attack_replay": config.replay_plan_digest is not None,
                 }
             )
         )

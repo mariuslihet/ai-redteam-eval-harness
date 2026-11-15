@@ -91,6 +91,13 @@ async def diagnose(
                         )
                     else:
                         result.details["model_digest"] = selected.get("digest")
+                        if (
+                            config.expected_digest
+                            and selected.get("digest") != config.expected_digest
+                        ):
+                            result.issues.append(
+                                "Installed model digest differs from the pinned model"
+                            )
                         show = await client.post(
                             endpoint + "/api/show", json={"model": config.model}
                         )

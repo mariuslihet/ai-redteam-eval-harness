@@ -58,7 +58,7 @@ async def test_paired_adaptive_search_full_dag_and_resume(tmp_path):
     store.close()
     rerun = await Runner(config(), backend=backend).run(checkpoint)
     assert len(rerun) == 6 and len(backend.requests) == calls + 4
-    with pytest.raises(ExceptionGroup, match="TaskGroup"):
+    with pytest.raises(ValueError, match="Corrupt checkpoint"):
         # Corrupt committed data must fail instead of silently skipping it.
         file = next(checkpoint.glob("pair-*.json"))
         file.write_text('{"result": {}, "sha256": "invalid"}')

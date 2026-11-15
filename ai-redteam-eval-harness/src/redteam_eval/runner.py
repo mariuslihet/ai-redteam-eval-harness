@@ -13,8 +13,10 @@ from typing import Literal
 
 import httpx
 
+from redteam_eval.archive import RunArchive
 from redteam_eval.attacker import RedAgent
 from redteam_eval.backends import make_backend
+from redteam_eval.budgets import BudgetExceeded, RunBudget, is_budget_error
 from redteam_eval.checkpoint import CheckpointStore
 from redteam_eval.defense import DefensePipeline, Guardrail, context_message
 from redteam_eval.evaluation import HybridEvaluator
@@ -35,6 +37,7 @@ from redteam_eval.models import (
 )
 from redteam_eval.mutations import Bandit, Mutation, PromptMutator
 from redteam_eval.providers import ProviderSimulator, RateLimited
+from redteam_eval.replay import validate_replay
 from redteam_eval.synthesis import synthesize
 
 LOGGER = logging.getLogger(__name__)
@@ -60,8 +63,13 @@ class Runner:
         guardrail: Guardrail | None = None,
     ):
         self.config = config
+        self.budget = RunBudget(config)
         self.backend = backend or make_backend(config.backend)
-        red = attacker or (make_backend(config.attacker) if config.attacker else None)
+        red = (
+            None
+            if config.replay_plan_digest
+            else (attacker or (make_backend(config.attacker) if config.attacker else None))
+        )
         semantic = judge or (make_backend(config.judge) if config.judge else None)
         self.red = RedAgent(RetryingBackend(red, self) if red else None)
         self.evaluator = HybridEvaluator(
@@ -75,12 +83,15 @@ class Runner:
     async def retry(self, operation: Callable[[int], Awaitable[Response]], seed: int) -> Response:
         start = time.perf_counter()
         for attempt in range(self.config.retries + 1):
+            self.budget.before_request()
             try:
                 response = await operation(attempt)
+                self.budget.observe(response.usage)
                 response.attempts = attempt + 1
                 response.latency_ms = max(response.latency_ms, (time.perf_counter() - start) * 1000)
                 return response
             except (RateLimited, httpx.TransportError, httpx.HTTPStatusError) as exc:
+                self.budget.record.failed_attempts += 1
                 if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code not in (
                     408,
                     429,
@@ -107,20 +118,52 @@ class Runner:
                 await asyncio.sleep(delay)
         raise RuntimeError("Unreachable retry state")
 
-    async def run(self, checkpoint: Path | None = None) -> list[PairResult]:
+    async def run(
+        self, checkpoint: Path | None = None, replay: RunArchive | None = None
+    ) -> list[PairResult]:
+        self.budget = RunBudget(self.config)
+        deadline = asyncio.timeout(self.config.max_run_seconds)
+        try:
+            async with deadline:
+                results = await self._run(checkpoint, replay)
+        except TimeoutError as exc:
+            self.budget.finish("budget_exceeded" if deadline.expired() else "failed")
+            if deadline.expired():
+                raise BudgetExceeded(
+                    f"Run exceeded its {self.config.max_run_seconds}-second time allowance"
+                ) from exc
+            raise
+        except BaseException as exc:
+            self.budget.finish(
+                "budget_exceeded"
+                if is_budget_error(exc)
+                else "cancelled"
+                if isinstance(exc, asyncio.CancelledError)
+                else "failed"
+            )
+            raise
+        else:
+            self.budget.finish("complete")
+            return results
+
+    async def _run(self, checkpoint: Path | None, replay: RunArchive | None) -> list[PairResult]:
         scenarios = synthesize(self.config.seed, self.config.cases_per_family)
+        if bool(self.config.replay_plan_digest) != (replay is not None):
+            raise ValueError(
+                "Recorded replay requires both its source archive and matching plan digest"
+            )
+        plans = validate_replay(replay, self.config, scenarios) if replay else None
         store = CheckpointStore(checkpoint, self.config, scenarios) if checkpoint else None
         semaphore = asyncio.Semaphore(self.config.concurrency)
+        cached: dict[str, PairResult] = {}
 
         async def worker(scenario: Scenario, profile: ProviderProfile) -> PairResult:
             key = f"{scenario.id}:{profile.name}"
-            if store:
-                saved = store.load(key)
-                if saved:
-                    LOGGER.info(json.dumps({"event": "resumed", "key": key}))
-                    return saved
+            if key in cached:
+                LOGGER.info(json.dumps({"event": "resumed", "key": key}))
+                return cached[key]
             async with semaphore:
-                result = await self.pair(scenario, profile, key)
+                result = await self.pair(scenario, profile, key, plans[key] if plans else None)
                 if store:
                     store.save(result)
                 LOGGER.info(json.dumps({"event": "pair_complete", "key": key}))
@@ -128,6 +171,16 @@ class Runner:
 
         tasks: list[asyncio.Task[PairResult]] = []
         try:
+            # Charge all saved work before starting any new inference. Otherwise a
+            # later cached pair could reveal that earlier new calls had no allowance.
+            if store:
+                for scenario in scenarios:
+                    for profile in self.config.providers:
+                        key = f"{scenario.id}:{profile.name}"
+                        saved = store.load(key)
+                        if saved:
+                            self.budget.restore(saved)
+                            cached[key] = saved
             # TaskGroup cancels and joins siblings before the checkpoint lock is released.
             async with asyncio.TaskGroup() as group:
                 for scenario in scenarios:
@@ -138,9 +191,15 @@ class Runner:
             if store:
                 store.close()
 
-    async def pair(self, scenario: Scenario, profile: ProviderProfile, key: str) -> PairResult:
+    async def pair(
+        self,
+        scenario: Scenario,
+        profile: ProviderProfile,
+        key: str,
+        recorded_plan: list[Mutation] | None = None,
+    ) -> PairResult:
         simulator = ProviderSimulator(self.backend, profile)
-        plan: list[Mutation] = []
+        plan: list[Mutation] = list(recorded_plan) if recorded_plan is not None else []
         bandit = Bandit(derive_seed(scenario.seed, profile.name, "bandit"))
         trajectories: list[Trajectory] = []
         for mode in ("baseline", "hardened"):
@@ -151,10 +210,14 @@ class Runner:
             turns: list[Turn] = []
             prior_calls: list[ToolCall] = []
             max_turns = 1 if scenario.benign else self.config.max_turns
+            if recorded_plan is not None:
+                max_turns = len(recorded_plan)
             for depth in range(max_turns):
                 turn_seed = derive_seed(scenario.seed, profile.name, depth)
                 attacker_usage, attacker_latency = Usage(), 0.0
-                if mode == "baseline":
+                if recorded_plan is not None:
+                    mutation = plan[depth]
+                elif mode == "baseline":
                     if depth == 0:
                         mutation = Mutation(operator="identity", prompt=scenario.prompt)
                     else:
@@ -221,6 +284,7 @@ class Runner:
                     judge_latency_ms=judge_latency,
                     strategy_score=mutation.score,
                     attacker_outputs=mutation.refinements,
+                    user_messages=[*mutation.prelude, mutation.prompt],
                 )
                 turns.append(turn)
                 if mode == "baseline" and mutation.operator != "identity":
@@ -242,7 +306,11 @@ class Runner:
                 )
                 # Always finish replaying the baseline plan in hardened mode, even if a
                 # hardened turn succeeds early; matched budgets prevent biased deltas.
-                if mode == "baseline" and (verdict.attack_success or scenario.benign):
+                if (
+                    recorded_plan is None
+                    and mode == "baseline"
+                    and (verdict.attack_success or scenario.benign)
+                ):
                     break
             if turns and turns[-1].state == "searching":
                 turns[-1].state = "exhausted"

@@ -114,6 +114,141 @@ Delta intervals resample scenario clusters across providers. With `--confidence-
 regression fails when its upper delta bound exceeds the tolerated increase. Timing is not
 gated because engine load and hardware scheduling can change between runs.
 
+## Exact live attack replay and model pinning
+
+Reuse a measured attack plan while obtaining **fresh target and judge completions** from the
+local model. Replay never returns recorded target answers or calls the attacker to generate
+new follow-ups. It sends the source baseline's exact user-message segments to both modes,
+including split-history boundaries, and retains each new mode's own assistant history.
+
+```powershell
+.\.venv\Scripts\python.exe -m redteam_eval `
+  --replay-from reports/my-run/telemetry.json `
+  --model qwen2.5:7b-instruct-q4_K_M `
+  --compare-to reports/my-run/telemetry.json `
+  --checkpoint checkpoints/replay-run --output reports/replay-run
+```
+
+Replay inherits the saved seed, cases, providers, token/turn budgets and judge configuration.
+Target model, backend, endpoint, concurrency and retry settings can be overridden directly.
+Use a full `--config` to change defense settings; generated worlds and attack budgets must
+still match the source. Both modes finish the recorded plan even if a new target succeeds
+early. Comparison involving a replay rejects different recorded user-message plans.
+The archive's execution mode and SHA-256 plan digest distinguish replay from adaptive search;
+checkpoints from different plans cannot be interchanged. Older archives recover segments from
+native/provider request envelopes, and split mutations without recoverable boundaries fail
+explicitly. Input archives cannot be overwritten by replay output. Responses still depend on
+engine behavior; matching inputs does not guarantee bit-identical model completions.
+Use a fresh checkpoint directory after upgrading a configuration schema; compatibility
+checks include the complete validated configuration and reject older incompatible manifests.
+
+Pin an installed Ollama model to the digest observed by the readiness command:
+
+```powershell
+.\.venv\Scripts\python.exe -m redteam_eval --doctor --output reports/readiness
+$digest = (Get-Content reports/readiness/doctor.json -Raw | ConvertFrom-Json).details.model_digest
+.\.venv\Scripts\python.exe -m redteam_eval `
+  --replay-from reports/my-run/telemetry.json --model-digest $digest `
+  --output reports/pinned-replay
+```
+
+`BackendConfig.expected_digest` pins target, attacker or judge separately in JSON configs.
+The CLI pin applies to the target and to attacker/judge defaults using that same model;
+separately named attacker/judge models require their own pins in a config. Replay inherits
+the saved judge, so its target-only CLI override does not repin the judge. Changing the replay
+target model/backend clears its inherited pin unless a replacement is explicitly provided.
+The installed digest is checked **before every pinned inference request**, and mismatch or
+missing metadata aborts generation. The verified digest is recorded on each response and
+exported to CSV. Pinning currently supports Ollama; unsupported engines reject the option.
+This is a request-time tag check, not an atomic lock against a server changing weights between
+metadata verification and generation. Use immutable engine/model deployments for that guarantee.
+
+## Generation completeness
+
+Native Ollama/OpenAI finish reasons are retained; `length` and `max_tokens` flag token-limit
+truncation. Native metadata in older direct archives is read without changing response text.
+The direct Transformers pipeline conservatively flags output reaching its retokenized budget;
+this can differ from the engine's internal generated-token count. Missing finish metadata stays
+unknown and is counted separately rather than being claimed as a clean stop.
+
+Target truncation rates, review-queue entries, HTML annotations and per-turn CSV columns make
+incomplete outputs visible. Set `--max-truncation-rate 0` to fail a run or saved-report gate on
+any observed target truncation. This limit defaults to 1 and is preserved when regrading an
+archive unless overridden. `--confidence-gate` also applies its upper Wilson bound to this
+rate. A truncated response is still graded for leaked canaries and tool-policy violations;
+the harness does not fabricate a replacement completion.
+
+Invalid local-judge JSON or ungrounded attack evidence receives at most one corrective
+model call under the same rubric. Both actual judge outputs and validation errors are stored,
+all judge tokens/latency are counted, and repaired verdicts remain flagged for review.
+`require_judge` still fails the run if the second actual response is invalid. The retry
+never weakens deterministic evidence precedence or substitutes a canned verdict.
+
+## Multi-seed campaigns
+
+Run the same real local target/judge setup across several procedural seeds. Each seed has its
+own generated world, baseline/hardened pairs, native responses, audit and checkpoint directory.
+Seeds execute sequentially so one local model instance can serve the campaign.
+
+```powershell
+.\.venv\Scripts\python.exe -m redteam_eval --config examples/campaign-ollama.json `
+  --seeds 42 1729 --checkpoint checkpoints/campaign --output reports/campaign
+```
+
+`--seeds` accepts 2â€“32 distinct nonnegative seeds. It can use a base `--config`, but cannot
+combine with `--seed`, single-run replay, saved-report, readiness or comparison modes.
+The pooled campaign gate and **every per-seed gate** must pass; a favorable average never
+hides a failing seed. The report includes the worst seed's hardened ASR and links to each
+seed's actual observed-response audit. Pooled Wilson intervals remain descriptive, with
+scenario-cluster bootstrap for defense deltas; a short campaign is not proof of general safety.
+
+Open `campaign.html` for the overview, `campaign.json` for machine-readable status and
+`seed-<seed>/telemetry.json` for a standard complete run archive. Single-run archive tools
+operate on those per-seed telemetry files, not on the campaign index. Failed or interrupted
+campaigns have no aggregate result; completed seed reports and pair checkpoints remain.
+Rerunning the same recipe resumes committed pairs without new calls. Campaign output is
+exclusively locked and bound to its model/configuration/ordered-seed recipe, so a different
+experiment requires a new output directory. After a hard process crash, verify the recorded
+lock PID has stopped before removing `.campaign.lock`.
+
+## Token and time allowances
+
+Bound a normal or replay run, or apply the same allowance independently to each campaign seed:
+
+```powershell
+.\.venv\Scripts\python.exe -m redteam_eval --config examples/live-ollama.json `
+  --max-total-tokens 50000 --max-run-seconds 300 --output reports/bounded
+```
+
+These execution options can override a full config; JSON configs use `max_total_tokens` and
+`max_run_seconds`. They do not apply to readiness checks or archive-only report regeneration.
+The token allowance includes input and output tokens for the target, attacker and judge,
+including corrective judge/refinement calls. Restored pair usage is charged before any new
+requests start. Estimated or incomplete native usage metadata cannot support an exact token
+allowance and stops the bounded run explicitly. Without a token allowance, evaluation still
+supports backends with clearly marked estimated usage.
+
+The controller checks before requests and after observed completions. A single generation or
+requests already in flight can exceed the allowance before their usage is known; the actual
+observed overage is recorded and further work stops. Usage from failed/cancelled requests can
+be unknown, and a local engine may continue after client cancellation. This is an observed
+usage guard, not a hard reservation or billing guarantee. Only committed pair usage is
+restored on resume; earlier uncommitted attempts are not automatically charged again.
+
+The time allowance wraps Runner execution with cooperative cancellation. It cancels pending
+async requests and joins workers before releasing locks. Blocking local model work may need
+to finish safely before cancellation completes; report rendering is outside this deadline.
+In a campaign, allowances reset per seed, not across the entire campaign.
+
+`execution.json` records status, observed/restored/total tokens, response and attempt counts,
+estimated responses, elapsed time and limits. An exhausted allowance is an operational failure
+(exit 2), never a fabricated model answer or a passing partial benchmark. Committed pairs
+remain resumable. Execution allowances are excluded from evaluation fingerprints so they can
+be raised on resume without changing prompts, model settings or scoring; lowering the token
+allowance below restored work fails before any new inference. Campaigns also save one
+`execution.json` per seed. A fully cached resume reports zero new responses and the restored
+token total rather than claiming new model calls.
+
 ## Architecture
 
 ```text
@@ -290,8 +425,8 @@ synthetic-secret redaction rate as proof of broad production safety.
   Attacker/judge usage and latency are recorded separately from target costs.
 
 Wilson intervals use `z=1.959963984540054`: center
-`(p + z²/(2n))/(1+z²/n)` and half-width
-`z*sqrt(p*(1-p)/n + z²/(4n²))/(1+z²/n)`. Empty strata are unknown `[0,1]`, never a
+`(p + zÃ‚Â²/(2n))/(1+zÃ‚Â²/n)` and half-width
+`z*sqrt(p*(1-p)/n + zÃ‚Â²/(4nÃ‚Â²))/(1+zÃ‚Â²/n)`. Empty strata are unknown `[0,1]`, never a
 confident zero. Delta intervals use 2,000 deterministic paired bootstrap resamples clustered
 by generated scenario across provider envelopes. Wilson bounds describe individual strata;
 pooled provider observations are correlated. Mutation/depth breakdowns are conditional on
@@ -305,11 +440,11 @@ the checkpoint fingerprint, so a saved run can be regraded with a stricter gate.
 
 ## Checkpointing and audit artifacts
 
-`--checkpoint` writes an immutable manifest fingerprint covering the full config, generated
+`--checkpoint` writes an immutable manifest fingerprint covering inference/scoring config, generated
 suite and package version. Each completed baseline/hardened pair commits as a checksummed,
 fsync'd atomic JSON file. Resume uses matching committed pairs without making inference calls;
 an interrupted in-flight pair is rerun. This is pair-level, not token- or turn-level resume.
-Changing model/config/seed/suite requires a new checkpoint directory. Changing model weights
+Changing inference/scoring configuration, model, seed or suite requires a new checkpoint directory. Execution allowances may be adjusted on resume. Changing model weights
 in place is not automatically detected: use a new model path/run directory or version pin.
 An exclusive `.run.lock` prevents concurrent writers. After a hard process crash, verify the
 process has stopped before manually removing a stale lock. Corrupt checkpoints fail visibly.
@@ -349,5 +484,4 @@ Adapter references: [Ollama API](https://github.com/ollama/ollama/blob/main/docs
 [vLLM structured outputs](https://docs.vllm.ai/en/latest/features/structured_outputs/),
 [Transformers chat templates](https://huggingface.co/docs/transformers/main/chat_templating).
 
-See [VALIDATION.md](VALIDATION.md) for the executed checks and the distinction between the
-offline demonstration and unverified live-hardware behavior.
+See [VALIDATION.md](VALIDATION.md) for executed checks, real-model evidence and verification limits.
