@@ -1,0 +1,268 @@
+"""Loopback-only measured-results dashboard and same-origin local inference API."""
+
+from __future__ import annotations
+
+import asyncio
+import html
+import json
+import logging
+import secrets
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.resources import files
+from pathlib import Path
+from typing import Any
+from urllib.parse import unquote, urlsplit
+
+from pydantic import ValidationError
+
+from redteam_eval.dashboard_data import ReportStore
+from redteam_eval.dashboard_jobs import JobManager
+from redteam_eval.inspection import inspect_pair
+from redteam_eval.models import BackendConfig, Model
+from redteam_eval.regression import RegressionLimits, compare_runs
+
+
+class HTTPReply(Model):
+    status: int
+    body: bytes
+    content_type: str = "application/json; charset=utf-8"
+    headers: dict[str, str] = {}
+
+
+def json_reply(value: Any, status: int = 200) -> HTTPReply:
+    return HTTPReply(
+        status=status, body=json.dumps(value, ensure_ascii=False, allow_nan=False).encode()
+    )
+
+
+class DashboardApp:
+    def __init__(self, root: Path, backend: BackendConfig, port: int = 8765):
+        self.store = ReportStore(root)
+        self.jobs = JobManager(self.store, backend)
+        self.port, self.csrf = port, secrets.token_urlsafe(32)
+
+    def handle(
+        self, method: str, target: str, headers: dict[str, str], body: bytes = b""
+    ) -> HTTPReply:
+        headers = {key.lower(): value for key, value in headers.items()}
+        hosts = {f"127.0.0.1:{self.port}", f"localhost:{self.port}"}
+        if headers.get("host") not in hosts:
+            return json_reply(
+                {"error": "Dashboard accepts only its loopback host", "kind": "permission"}, 403
+            )
+        origin = headers.get("origin")
+        if origin is not None and origin not in {"http://" + host for host in hosts}:
+            return json_reply(
+                {"error": "Cross-origin dashboard requests are disabled", "kind": "permission"}, 403
+            )
+        if method not in ("GET", "POST"):
+            return json_reply({"error": "Method not supported"}, 405)
+        if method == "POST":
+            if origin is None or not secrets.compare_digest(
+                headers.get("x-dashboard-token", ""), self.csrf
+            ):
+                return json_reply(
+                    {
+                        "error": "Dashboard session changed. Refresh the page and retry.",
+                        "kind": "permission",
+                    },
+                    403,
+                )
+            if headers.get("content-type", "").split(";", 1)[0] != "application/json":
+                return json_reply({"error": "Requests must use application/json"}, 415)
+        if len(body) > 65536:
+            return json_reply({"error": "Request body is too large"}, 413)
+        try:
+            parsed = urlsplit(target)
+        except ValueError:
+            return json_reply({"error": "Malformed request path"}, 400)
+        route = unquote(parsed.path)
+        if parsed.query or parsed.fragment or ".." in route.split("/") or "\\" in route:
+            return json_reply({"error": "Unsupported request path"}, 400)
+        try:
+            if method == "GET" and route == "/":
+                template = (
+                    files("redteam_eval").joinpath("web", "index.html").read_text(encoding="utf-8")
+                )
+                return HTTPReply(
+                    status=200,
+                    body=template.replace(
+                        "__CSRF_TOKEN__", html.escape(self.csrf, quote=True)
+                    ).encode(),
+                    content_type="text/html; charset=utf-8",
+                )
+            if method == "GET" and route.startswith("/assets/"):
+                name = route.removeprefix("/assets/")
+                if name not in {"dashboard.css", "dashboard.mjs", "dashboard-core.mjs"}:
+                    return json_reply({"error": "Asset not found"}, 404)
+                content_type = (
+                    "text/css; charset=utf-8"
+                    if name.endswith(".css")
+                    else "text/javascript; charset=utf-8"
+                )
+                return HTTPReply(
+                    status=200,
+                    body=files("redteam_eval").joinpath("web", name).read_bytes(),
+                    content_type=content_type,
+                )
+            if method == "GET" and route == "/api/catalog":
+                return json_reply(self.store.catalog())
+            if method == "GET" and route == "/api/models":
+                try:
+                    return json_reply(asyncio.run(self.jobs.models()))
+                except Exception as exc:
+                    return json_reply(
+                        {"ready": False, "models": [], "error": f"Local engine unavailable: {exc}"}
+                    )
+            if method == "GET" and route == "/api/jobs":
+                return json_reply({"jobs": self.jobs.snapshots()})
+            parts = route.strip("/").split("/")
+            if method == "GET" and len(parts) == 3 and parts[:2] == ["api", "runs"]:
+                return json_reply(self.store.detail(parts[2]))
+            if (
+                method == "GET"
+                and len(parts) == 5
+                and parts[:2] == ["api", "runs"]
+                and parts[3] == "cases"
+            ):
+                archive = self.store.archive(parts[2])
+                pair = next((item for item in archive.results if item.key == parts[4]), None)
+                if pair is None:
+                    raise KeyError(parts[4])
+                return json_reply(inspect_pair(pair))
+            if (
+                method == "GET"
+                and len(parts) == 5
+                and parts[:2] == ["api", "runs"]
+                and parts[3] == "download"
+            ):
+                filename = parts[4]
+                return HTTPReply(
+                    status=200,
+                    body=self.store.download(parts[2], filename),
+                    content_type="application/octet-stream",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+                )
+            if method == "GET" and len(parts) == 3 and parts[:2] == ["api", "jobs"]:
+                return json_reply(self.jobs.snapshot(parts[2]))
+            if method == "POST":
+                payload = json.loads(body)
+                if not isinstance(payload, dict):
+                    raise ValueError("JSON request must be an object")
+                if route == "/api/jobs":
+                    return json_reply(self.jobs.submit(payload).model_dump(mode="json"), 202)
+                if len(parts) == 4 and parts[:2] == ["api", "jobs"]:
+                    if payload:
+                        raise ValueError(
+                            "Cancel and same-settings resume requests must use an empty JSON object"
+                        )
+                    if parts[3] == "cancel":
+                        return json_reply(self.jobs.cancel(parts[2]).model_dump(mode="json"))
+                    if parts[3] == "resume":
+                        return json_reply(self.jobs.resume(parts[2]).model_dump(mode="json"), 202)
+                if route == "/api/compare":
+                    if set(payload) != {"previous", "current"} or not all(
+                        isinstance(v, str) for v in payload.values()
+                    ):
+                        raise ValueError("Choose exactly a previous and current measured run")
+                    return json_reply(
+                        compare_runs(
+                            self.store.archive(payload["previous"]),
+                            self.store.archive(payload["current"]),
+                            RegressionLimits(),
+                        )
+                    )
+            return json_reply({"error": "Dashboard resource not found"}, 404)
+        except KeyError:
+            return json_reply({"error": "Measured artifact or job not found"}, 404)
+        except ValidationError as exc:
+            issues = [
+                ".".join(str(v) for v in issue["loc"]) + ": " + issue["msg"]
+                for issue in exc.errors()
+            ]
+            return json_reply(
+                {"error": "Invalid request or archive: " + "; ".join(issues[:6])}, 400
+            )
+        except (ValueError, OSError, UnicodeError) as exc:
+            return json_reply({"error": str(exc)}, 400)
+        except RuntimeError as exc:
+            return json_reply({"error": str(exc)}, 409)
+        except Exception:
+            logging.getLogger(__name__).exception("Dashboard request failed")
+            return json_reply(
+                {"error": "Dashboard could not read this resource; check the local server log"}, 500
+            )
+
+
+class DashboardServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, app: DashboardApp, port: int):
+        self.app = app
+        super().__init__(("127.0.0.1", port), DashboardHandler)
+        app.port = self.server_address[1]
+
+
+class DashboardHandler(BaseHTTPRequestHandler):
+    server: DashboardServer
+
+    def setup(self) -> None:
+        super().setup()
+        self.connection.settimeout(20)
+
+    def respond(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length < 0 or length > 65536 or self.headers.get("Transfer-Encoding"):
+                reply = json_reply({"error": "Unsupported or oversized request body"}, 413)
+            else:
+                body = self.rfile.read(length) if length else b""
+                reply = self.server.app.handle(
+                    self.command, self.path, dict(self.headers.items()), body
+                )
+        except (ValueError, TimeoutError):
+            reply = json_reply({"error": "Invalid or incomplete HTTP request"}, 400)
+        self.send_response(reply.status)
+        self.send_header("Content-Type", reply.content_type)
+        self.send_header("Content-Length", str(len(reply.body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+        )
+        for key, value in reply.headers.items():
+            self.send_header(key, value)
+        self.end_headers()
+        try:
+            self.wfile.write(reply.body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
+
+    do_GET = respond
+    do_POST = respond
+    do_OPTIONS = respond
+    do_PUT = respond
+    do_DELETE = respond
+
+    def log_message(self, format: str, *args: Any) -> None:
+        # HTTP request lines never include model prompts or response bodies.
+        return
+
+
+def serve_dashboard(root: Path, backend: BackendConfig, port: int = 8765) -> None:
+    if not 0 <= port <= 65535:
+        raise ValueError("Choose a dashboard port from 0 through 65535")
+    app = DashboardApp(root, backend, port)
+    server = DashboardServer(app, port)
+    print(f"Dashboard: http://127.0.0.1:{app.port}", flush=True)
+    try:
+        server.serve_forever(poll_interval=0.25)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        with app.jobs.lock:
+            if app.jobs.active:
+                app.jobs.cancel(app.jobs.active)
+        server.server_close()

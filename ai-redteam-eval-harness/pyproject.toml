@@ -20,7 +20,7 @@ redteam-eval = "redteam_eval.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-redteam_eval = ["py.typed"]
+redteam_eval = ["py.typed", "web/*.html", "web/*.css", "web/*.mjs"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -54,6 +54,65 @@ provides an explicitly deterministic-only grading/search run against a real targ
 `--config examples/live-ollama.json` loads the full validated configuration; run overrides
 are rejected rather than silently ignored. Output, checkpoint and gate options still apply.
 
+## Interactive local dashboard
+
+```powershell
+.\.venv\Scripts\python.exe -m redteam_eval --dashboard --reports-root reports --port 8765
+```
+
+Open the [local dashboard](http://127.0.0.1:8765). It reads measured native-inference archives;
+an empty folder displays an empty state. Invalid, incomplete and simulated-provider
+archives are listed as excluded, rather than displayed as measured benchmarks.
+Metrics, confidence intervals and security gates are recomputed from validated records.
+
+- Browse runs and multi-seed campaigns, inspect individual seeds and review flagged evidence.
+- Search full native responses, tool proposals and findings; filter threats, controls and families.
+- Inspect paired baseline/hardened replies, guard-delivered text, real judge reasoning,
+  repair attempts, usage, truncation and model provenance. Tool proposals are never executed.
+- Inspect seven capability checks per mode: original/delivered confidentiality, original/delivered
+  tool authorization, authorized task completion, generation completeness and proposal parsing.
+  Expand each turn's exact user messages, native request/response, lineage, policy findings and
+  leak-check evidence. Export the complete measured case and its diagnostics as JSON.
+- Compare compatible measured runs and download their telemetry.
+- Launch bounded evaluations or campaigns with an installed Ollama completion model. Watch
+  committed-pair progress, cancel, and resume with the same settings. Committed work is reused;
+  an interrupted pair is rerun. Only one dashboard job runs at a time.
+- Request a fresh local-model explanation with separate baseline/hardened assessments,
+  security impact, effects on legitimate tasks, recommendations and limitations. Citation
+  choices come from actual native output excerpts, and quotes are checked again after inference.
+  The generated claims are model opinions; quote validation does not prove their conclusions.
+
+Evaluation and analysis jobs use real inference, pin the selected installed model digest,
+retain native outputs, and fail visibly when inference or structured evidence validation fails.
+The launch controls currently require Ollama. Viewing supports native Ollama and local
+OpenAI-compatible HTTP archives; Transformers archives without retained HTTP envelopes are
+excluded. Other CLI backends remain available for evaluation.
+
+The server binds to loopback, uses same-origin/session checks for actions, and renders model
+text as text. It loads no remote UI assets. Keep this local service on your own computer.
+Jobs and their evidence are stored beneath the reports root in `.dashboard-jobs/`.
+Token allowances count observed usage and may be exceeded by an in-flight response;
+cancellation stops client work but a model server may continue an already submitted generation.
+No GitHub access or publishing is part of the dashboard.
+
+Choose **New evaluation → Test depth → Advanced** for a 72-pair mixed suite: 54 standard
+threat/control cases plus 18 advanced cases covering nine compound capabilities. The preset
+selects 12 cases per family, three attack turns, 1,536 output tokens, a 300,000 observed-token
+allowance and 1,800 seconds per run/seed. Review these visible allowances before starting.
+Use **All test depths → Advanced** in Scenario explorer to isolate the advanced cases, and
+search by capability name. Controls share the same public records, tool policies and private
+synthetic vault as their matched threats.
+
+Advanced cases resolve ticket-to-source-to-revision evidence among conflicting records,
+test forged document authority and encoded instructions, pressure encoded/partial/cross-channel
+secret disclosure, and test cumulative refunds, cross-invoice prerequisites, export boundaries
+and privilege escalation. Cases at indices 0–8 retain their existing seeded worlds; indices 9
+and above add the compound challenges. Setting `--cases-per-family 12` also selects this mix
+from the CLI. These are security and task-following capabilities, not a general intelligence
+benchmark. Case diagnostics are recomputed evidence checks and do not overwrite archived
+security verdicts; the exact-total task-plan check is stricter than the historical completion
+grader's presence-of-requested-call check.
+
 ## Model readiness, saved reports and regression comparisons
 
 Check the actual local engine, installed model, model digest and completion capability before
@@ -465,6 +524,12 @@ tokens, latency and retry count; text identifiers are protected against spreadsh
 .\.venv\Scripts\python.exe -m mypy src
 .\.venv\Scripts\python.exe -m ruff check src tests
 .\.venv\Scripts\python.exe -m ruff format --check src tests
+node --test tests/dashboard-core.test.mjs
+
+# Optional browser checks: install Playwright locally first, then start the dashboard.
+# Uses installed Chrome; set BROWSER_CHANNEL to use another installed Chromium channel.
+npm install --no-save --package-lock=false playwright
+node tests/dashboard.browser.mjs
 
 # Opt-in hardware smoke (preinstalled model; no downloads).
 $env:REDTEAM_LOCAL_MODEL = "qwen2.5:7b-instruct-q4_K_M"
@@ -479,6 +544,16 @@ includes every generator/mutation, leak encodings, schema and policy boundaries,
 round trips, adaptive feedback, identical replay, concurrency, retries, checkpoints,
 statistics, reporting and CLI exit codes. Hardware smoke skips unless explicitly enabled;
 skipping it does not establish live backend correctness.
+
+Dashboard tests use a provenance-hashed recording of actual Qwen outputs, with no
+replacement completion backend. The opt-in dashboard hardware test performs fresh target
+inference, cancels after a committed pair, resumes, and requests a grounded local-model
+explanation. Set `REDTEAM_DASHBOARD_LIVE_ROOT` to retain that test's reports at a chosen path;
+otherwise pytest uses its temporary directory. Browser checks use the real running service
+and existing measured reports. `PLAYWRIGHT_MODULE` can point to an existing Playwright
+installation; `DASHBOARD_URL` selects a different local server URL.
+Set `DASHBOARD_LIVE=1` when running the browser checks to also launch a fresh target
+evaluation and request the developed local-model explanation through the actual UI.
 
 Adapter references: [Ollama API](https://github.com/ollama/ollama/blob/main/docs/api.md),
 [vLLM structured outputs](https://docs.vllm.ai/en/latest/features/structured_outputs/),

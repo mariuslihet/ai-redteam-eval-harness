@@ -14,7 +14,10 @@ def deny_network(request, monkeypatch):
     import redteam_eval.runner
     from tests.doubles import DeterministicBackend
 
-    monkeypatch.setattr(redteam_eval.runner, "make_backend", lambda config: DeterministicBackend())
+    if not request.node.module.__name__.split(".")[-1].startswith("test_dashboard"):
+        monkeypatch.setattr(
+            redteam_eval.runner, "make_backend", lambda config: DeterministicBackend()
+        )
 
     def blocked(*args, **kwargs):
         raise AssertionError("Unexpected network access in offline test")

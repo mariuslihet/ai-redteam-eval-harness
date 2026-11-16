@@ -1,14 +1,15 @@
 # Validation record
 
-Validated locally on 15 November 2026 with Python 3.12.14. Changes remain local; no commits
+Validated locally on 16 November 2026 with Python 3.12.14. Changes remain local; no commits
 or pushes were made during this feature extension.
 
 ## Current verification
 
 | Check | Evidence |
 |---|---|
-| Unit, integration and live smoke tests | 178 passed, including live inference against the installed Qwen model |
-| Strict typing | mypy passes across 23 source modules |
+| Unit, integration and live smoke tests | 231 offline tests passed; all three opt-in hardware tests passed in separate runs (234 total), including advanced capabilities, cancellation/resume and developed analysis |
+| Dashboard browser and frontend checks | Real Chrome workflow checks passed at 1440×900 and 390×844; four Node tests passed |
+| Strict typing | mypy passes across 28 source modules |
 | Lint and formatting | Ruff checks all source and test files |
 | Readiness and real inference probe | Ollama 0.40.13, Qwen 2.5 7B, actual answer `108` to `93 + 15` |
 | Archive-only regeneration | Rebuilt the six-pair live audit with `inference_requested: false` |
@@ -28,6 +29,71 @@ regression reports are in `reports/features-review`. These artifact directories 
 by Git. Archive regeneration uses measured responses and stored verdicts, recomputes summary
 statistics, and makes no inference calls. It does not independently rejudge saved outputs or
 cryptographically authenticate the archive.
+
+## Interactive dashboard verification, 16 November
+
+The expanded Inspect view adds seven evidence-based checks in each mode, exact native
+conversation/request/response details, original-versus-delivered tool and leak checks,
+full policy schemas and case JSON export. Browser checks confirm the R badge, lab subtitle
+and computer-only footer sentence are absent. Advanced-only filtering, capability-name
+search, export fidelity and desktop/mobile Inspect layouts were exercised in real Chrome.
+
+The full mixed advanced evaluation is retained in
+`reports/advanced-capabilities-20261116/telemetry.json`: 72 paired scenarios, including
+18 advanced threat/control cases spanning nine capabilities, with 144 actual Qwen target
+replies and 188,919 reported tokens. It uses one attack turn and deterministic grading;
+no local judge or model-generated attacker was used for this measured run. All target
+responses are native inference with the pinned Qwen digest. The initial 18 advanced pairs
+were measured in `reports/advanced-capability-probe-20261116/advanced-probe.json`; the full
+run restored those exact committed pairs and made 108 additional actual target requests.
+The final run observed baseline ASR 25%, hardened ASR 0%, and hardened benign failure 0%.
+These are descriptive results from this suite, not a broad capability or safety guarantee.
+
+New tests cover deterministic multi-hop resolution amid 18 conflicting records, paired
+world invariants across five seeds, original-world compatibility, cumulative budget and
+cross-invoice counterexamples, original versus guarded leaks/tools, exact refund totals,
+cross-turn history, unknown finish metadata, truncated output and inspection API errors.
+The opt-in advanced hardware test generated all 18 advanced pairs through the real local
+model and validated native envelopes, model digests, usage and finish metadata. It permits
+models to fail capability checks rather than replacing their replies or forcing passing scores.
+
+The loopback dashboard was checked using actual saved native model responses and fresh
+Ollama inference. It loads no demonstration dataset. The test recording in
+`tests/fixtures/measured-qwen-run.json` is a byte-identical copy of the existing real seed-1729
+archive, with a checked SHA-256 and provenance note; it is not a response backend.
+
+The opt-in dashboard worker test completed fresh inference, cancelled after committing a
+scenario pair, resumed with one restored pair and ten additional native target replies,
+and finished all six pairs. Its latest retained evaluation is
+`reports/dashboard-live-20261116/.dashboard-jobs/ae6eeb81c48e48db82f7bb700eaa1bc7/telemetry.json`.
+It recorded 11,509 combined restored/new target tokens. The test then requested a fresh
+local-model explanation with required baseline, hardened, security and utility assessments;
+every evidence quote was validated against the source native text or proposed calls.
+
+A separate browser-launched six-pair evaluation completed with 12 fresh target replies and
+11,497 observed tokens, followed by a developed analyst response using 3,062 tokens.
+Evidence remains in `reports/.dashboard-jobs/4d26ea37ad37438d9d63ecea63fdb83e/` and
+`reports/.dashboard-jobs/a13fafe7d0cf42f194575223637a0832/`. These successful fresh target
+runs used deterministic grading without a judge; all target and analyst responses were real.
+An earlier judge-enabled job failed explicitly after two ungrounded judge answers, preserving
+four committed pairs. It was not published as a complete benchmark. The analyst's first
+version also failed exact-quote validation; the final version constrains citation choices to
+actual native excerpts and retains runtime validation. Model-generated claims remain
+opinions even when the quoted evidence is genuine.
+
+Chrome checks exercised searches, family/distribution filtering, exact native response
+inspection, modal dismissal, comparisons, campaign seed coverage, real expired-session
+rejection, missing-run errors, and absence of remote UI requests or JavaScript page errors.
+Mobile checks found no page-width overflow; wide tables scroll within their regions.
+Keyboard checks observed a visible skip-link focus outline. Empty-state evidence came
+from a real empty reports root. Loading evidence delayed the real catalog request before
+continuing it; no response content was substituted. The excluded-archive state showed the
+actual invalid legacy artifacts. Screenshots and the design evidence record are under
+`reports/dashboard-verification/`. These checks are not a full WCAG certification.
+
+The wheel was built locally using already provisioned setuptools and inspected to confirm
+all four web assets are packaged. Dashboard jobs currently require Ollama; native HTTP
+archives can be inspected, while unsupported provenance and incomplete runs are excluded.
 
 ## Latest multi-seed campaign and resource limits
 

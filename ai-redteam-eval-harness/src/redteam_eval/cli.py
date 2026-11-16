@@ -14,6 +14,7 @@ from rich.table import Table
 from redteam_eval.archive import RunArchive, load_archive
 from redteam_eval.campaign import CampaignSpec, run_campaign
 from redteam_eval.checkpoint import atomic_json
+from redteam_eval.dashboard import serve_dashboard
 from redteam_eval.doctor import diagnose
 from redteam_eval.models import BackendConfig, ProviderProfile, RunConfig, Thresholds
 from redteam_eval.regression import (
@@ -31,6 +32,16 @@ def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Offline procedural local-LLM security benchmark")
     p.add_argument("--config", type=Path, help="RunConfig JSON; cannot combine with run overrides")
     source = p.add_mutually_exclusive_group()
+    source.add_argument(
+        "--dashboard", action="store_true", help="Open the local measured-results dashboard server"
+    )
+    p.add_argument(
+        "--reports-root",
+        type=Path,
+        default=Path("reports"),
+        help="Dashboard measured-results directory",
+    )
+    p.add_argument("--port", type=int, default=8765, help="Loopback dashboard port")
     source.add_argument(
         "--report-from",
         type=Path,
@@ -226,6 +237,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.probe and not args.doctor:
             raise ValueError("--probe requires --doctor")
+        if args.dashboard:
+            if args.seeds or args.checkpoint or args.compare_to:
+                raise ValueError(
+                    "Dashboard uses its own job controls; do not combine it with CLI evaluation modes"
+                )
+            serve_dashboard(args.reports_root, build_config(args).backend, args.port)
+            return 0
         if args.doctor and (args.checkpoint or args.compare_to):
             raise ValueError("--doctor cannot use --checkpoint or --compare-to")
         if args.seeds and (
