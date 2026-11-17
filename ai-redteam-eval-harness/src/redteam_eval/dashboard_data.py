@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from redteam_eval.archive import RunArchive, load_archive
 from redteam_eval.campaign import CampaignRecord
 from redteam_eval.reporting import gate, summarize
+from redteam_eval.scorecards import capability_scorecard
 
 
 def artifact_id(relative: str, kind: str = "run") -> str:
@@ -58,6 +59,7 @@ class ReportStore:
         self._cache: dict[str, tuple[int, int, RunArchive, dict[str, Any]]] = {}
         self._paths: dict[str, Path] = {}
         self._lock = threading.RLock()
+        self._scorecards: dict[str, tuple[int, int, dict[str, Any]]] = {}
 
     def bounded_path(self, path: Path) -> Path:
         resolved = path.resolve()
@@ -227,6 +229,20 @@ class ReportStore:
         if path.name != "telemetry.json":
             raise ValueError("Case analysis requires a measured run")
         return self._run(path)[0]
+
+    def scorecard(self, identifier: str) -> dict[str, Any]:
+        path = self.path(identifier)
+        archive = self.archive(identifier)
+        stat = path.stat()
+        with self._lock:
+            cached = self._scorecards.get(identifier)
+            if cached and cached[:2] == (stat.st_mtime_ns, stat.st_size):
+                return cached[2]
+            result = {"run_id": identifier, **capability_scorecard(archive)}
+            if len(self._scorecards) >= 128:
+                self._scorecards.pop(next(iter(self._scorecards)))
+            self._scorecards[identifier] = (stat.st_mtime_ns, stat.st_size, result)
+            return result
 
     def download(self, identifier: str, filename: str) -> bytes:
         if filename not in {

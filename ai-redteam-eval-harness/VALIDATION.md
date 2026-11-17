@@ -1,15 +1,16 @@
 # Validation record
 
-Validated locally on 16 November 2026 with Python 3.12.14. Changes remain local; no commits
+Validated locally on 17 November 2026 with Python 3.12.14. Changes remain local; no commits
 or pushes were made during this feature extension.
 
 ## Current verification
 
 | Check | Evidence |
 |---|---|
-| Unit, integration and live smoke tests | 231 offline tests passed; all three opt-in hardware tests passed in separate runs (234 total), including advanced capabilities, cancellation/resume and developed analysis |
+| Unit and integration tests | 277 offline tests passed on 17 November; four opt-in hardware tests excluded from that offline run |
+| Live replay workflow | Real evaluation, cancellation/resume, grounded analysis and fresh recorded replay passed on 17 November; advanced hardware probe and arithmetic smoke were also verified on 16 November |
 | Dashboard browser and frontend checks | Real Chrome workflow checks passed at 1440×900 and 390×844; four Node tests passed |
-| Strict typing | mypy passes across 28 source modules |
+| Strict typing | mypy passes across 30 source modules |
 | Lint and formatting | Ruff checks all source and test files |
 | Readiness and real inference probe | Ollama 0.40.13, Qwen 2.5 7B, actual answer `108` to `93 + 15` |
 | Archive-only regeneration | Rebuilt the six-pair live audit with `inference_requested: false` |
@@ -29,6 +30,75 @@ regression reports are in `reports/features-review`. These artifact directories 
 by Git. Archive regeneration uses measured responses and stored verdicts, recomputes summary
 statistics, and makes no inference calls. It does not independently rejudge saved outputs or
 cryptographically authenticate the archive.
+
+## Plain dashboard labels and real model skill tests, 17 November
+
+Dashboard controls now say regular task, private test value, with/without protection,
+original reply, messages and tool rules. Stored keys and original model replies are
+not rewritten. Browser checks verified the main Review results view contains none of
+the removed terms; full response inspection and export still preserve the exact text.
+
+The skill-test worker generates five question types from a seed and checks actual local
+model replies against computed answers. Tests cover repeatable question expansion,
+arithmetic and record-selection answers, sorted unique numbers, strict JSON key/type
+checking, cut-off/unfinished replies, malformed limits and blocked response injection.
+The actual Qwen hardware workflow passed cancellation with saved partial replies,
+ten fresh answers with recorded model versions and no forced JSON schema, and an
+observed-token-limit stop after preserving its first completed reply. Artifacts are
+retained under `reports/model-skills-live-20261117/`.
+
+An actual browser-launched five-question run is retained at
+`reports/.dashboard-jobs/2aec8c060e404bd6b6f29d3ab09b38b4/model-checks.json`. It passed four
+questions and failed sorting: the model returned -5 instead of the input number -25.
+This failure was retained, not replaced with a computed reply. Later checks also explain
+missing/added numbers, duplicates and ordering errors. Browser checks cover the form,
+saved results, exports and desktop/mobile views. Small sample scores are not general
+model ratings. The new tests do not change existing benchmark grading or model weights.
+
+## Configurable gates, saved-evidence previews and run library, 17 November
+
+Evaluation and campaign requests now retain explicit `Thresholds`; report writers receive
+those exact values. Gate preview API tests recompute canonical decisions from the measured
+Qwen recording, reconcile all four metric checks, reject invalid/session-expired requests,
+and verify the source archive bytes remain unchanged. Socket egress is prohibited in those
+tests, establishing that previewing makes no inference request. Zero observed truncation
+is correctly distinguished from a zero upper confidence bound.
+
+The real hardware workflow completed with custom ASR/FRR/improvement/truncation thresholds,
+verified those values in fresh telemetry, and confirmed recorded replay inherited them.
+Artifacts are retained under `reports/dashboard-gates-live-20261117/`. The workflow passed
+without substituting completion fixtures. Six Node tests passed, including run-library
+query/mode/gate combinations, ordering and source-order preservation.
+
+Chrome verified library empty/search/open states, confidence-gate previews, four metric rows,
+JSON exports, unchanged measured results after previews, preset inputs, and desktop/mobile
+widths of 1440 and 390 pixels. The library paginates 25 records and supports saved-gate and
+execution-mode filtering. Gate results are previews only; source data and library gate
+statuses remain unchanged. Screenshots are retained in `reports/dashboard-verification/`
+as `gates-desktop.png`, `gates-mobile.png`, `library-desktop.png` and `library-mobile.png`.
+
+## Capability scorecards and dashboard replay, 17 November
+
+Capability scorecards reconcile every per-check status with the recomputed case diagnostics,
+group by capability/family/depth, distinguish failed cases from failed checks, and exclude
+unknown/inapplicable observations from completion denominators. Scorecard cache tests reject
+an archive that changes to invalid JSON. Browser checks exercised failure-mode/check filters,
+filter clearing, exports, source summaries and real capability rows at desktop/mobile sizes.
+
+Dashboard replay captures the validated source before starting its worker and inherits its
+test/scoring settings. Offline tests verify the snapshot survives changes to the original
+file, missing sources do not start jobs, and resource/scoring overrides fail validation.
+The opt-in workflow ran a fresh six-pair source and replay through actual Qwen inference,
+verifying identical generated worlds and recorded messages, a saved replay-plan digest,
+zero new attacker tokens, and different native completion timestamps.
+
+That replay is retained at
+`reports/dashboard-replay-live-20261117/.dashboard-jobs/03960b5ef7ec4d79bf14c0aa6bda8ce6/telemetry.json`.
+It produced 12 fresh target responses using 11,497 tokens and retained its immutable
+`source-telemetry.json`. A separate replay launched through the actual browser form also
+completed with 12 fresh target responses; its measured run ID is
+`run_a67804dcc5e3f7c3b8d7a033`. No source completions were displayed as replay outputs.
+The Node suite passed five tests, and strict typing/lint/format checks passed.
 
 ## Interactive dashboard verification, 16 November
 

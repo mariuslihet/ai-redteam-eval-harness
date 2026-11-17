@@ -5,3 +5,13 @@
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;scroll-behavior:auto!important}}
 
 .inspection-panel{margin-top:18px;background:white;border:1px solid var(--line);border-radius:8px}.inspection-contract,.inspection-detail{margin:16px 20px}.inspection-contract p,.inspection-detail p{font-size:12px;line-height:1.8}.inspection-rule{min-width:220px;max-width:440px;font-size:11px}.inspection-turn{border-top:1px solid var(--line);padding:10px 0}.inspection-panel td{vertical-align:top;white-space:normal}.inspection-panel table{min-width:700px;table-layout:fixed}.inspection-panel th:first-child{width:28%}.inspection-panel th:nth-child(2),.inspection-panel th:nth-child(3){width:14%}.inspection-panel th:last-child{width:44%}.inspection-panel h4{font-size:12px}.inspection-panel summary{font-size:12px}.inspection-panel .panel-heading{flex-wrap:wrap}
+
+#scorecard-panel{margin-bottom:20px}#scorecard-panel table{min-width:900px;table-layout:fixed}#scorecard-panel td,#scorecard-panel th{white-space:normal;vertical-align:top}.scorecard-name{font-weight:600}.filter-bar #clear-filters{flex-shrink:0}
+
+.gate-settings{margin-top:18px;padding:14px;border:1px solid var(--line);border-radius:7px}.gate-settings summary{font-size:12px}.gate-preset-label{display:grid;gap:7px;font-size:12px;margin:14px 0}.library-dialog{width:min(1100px,95vw)}.library-filters{padding:0;flex-wrap:wrap}.library-filters label:first-child{flex:1;min-width:180px}.library-filters input{width:100%}.library-dialog td{white-space:normal;vertical-align:top;overflow-wrap:anywhere}#library-count{font-size:12px;color:var(--muted)}.library-dialog table{min-width:750px}.gate-rule-label{font-size:11px;color:var(--muted)}
+
+.form-grid .checkbox-label{display:flex;align-items:center;font-weight:400}.form-grid .checkbox-label input{width:auto;flex-shrink:0}
+
+.skills-results{margin-top:26px;border-top:1px solid var(--line);padding-top:10px}.skills-results .panel-heading{padding:12px 0}.skills-history-label{display:grid;gap:8px;font-size:12px;min-width:0}.skills-results pre{max-height:360px;overflow:auto}.skills-results .inspection-detail{margin-inline:0}.skills-results table{min-width:500px}.skills-results p{font-size:12px;line-height:1.8}
+
+@media(max-width:640px){.skills-results .panel-heading{display:block}.skills-history-label{width:100%}.skills-history-label select{width:100%;max-width:100%;min-width:0}.skills-results .panel-heading button{margin-top:12px}}

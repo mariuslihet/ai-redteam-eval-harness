@@ -13,13 +13,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 
 from redteam_eval.dashboard_data import ReportStore
 from redteam_eval.dashboard_jobs import JobManager
 from redteam_eval.inspection import inspect_pair
-from redteam_eval.models import BackendConfig, Model
+from redteam_eval.models import BackendConfig, Model, Thresholds
 from redteam_eval.regression import RegressionLimits, compare_runs
+from redteam_eval.reporting import gate, summarize
 
 
 class HTTPReply(Model):
@@ -27,6 +28,11 @@ class HTTPReply(Model):
     body: bytes
     content_type: str = "application/json; charset=utf-8"
     headers: dict[str, str] = {}
+
+
+class GatePreviewRequest(Model):
+    run_id: str = Field(pattern=r"^run_[0-9a-f]{24}$")
+    thresholds: Thresholds
 
 
 def json_reply(value: Any, status: int = 200) -> HTTPReply:
@@ -121,6 +127,13 @@ class DashboardApp:
                 return json_reply(self.store.detail(parts[2]))
             if (
                 method == "GET"
+                and len(parts) == 4
+                and parts[:2] == ["api", "runs"]
+                and parts[3] == "scorecard"
+            ):
+                return json_reply(self.store.scorecard(parts[2]))
+            if (
+                method == "GET"
                 and len(parts) == 5
                 and parts[:2] == ["api", "runs"]
                 and parts[3] == "cases"
@@ -151,6 +164,59 @@ class DashboardApp:
                     raise ValueError("JSON request must be an object")
                 if route == "/api/jobs":
                     return json_reply(self.jobs.submit(payload).model_dump(mode="json"), 202)
+                if route == "/api/regrade":
+                    request = GatePreviewRequest.model_validate(payload)
+                    archive = self.store.archive(request.run_id)
+                    summary = summarize(archive.results, archive.config.seed)
+                    failures = gate(summary, request.thresholds)
+                    checks = []
+                    for metric, limit in (
+                        ("asr", request.thresholds.max_asr),
+                        ("frr", request.thresholds.max_frr),
+                        ("truncation_rate", request.thresholds.max_truncation_rate),
+                    ):
+                        point = summary["hardened"][metric]
+                        observed = (
+                            point["upper" if request.thresholds.use_upper_ci else "rate"]
+                            if point["trials"]
+                            else None
+                        )
+                        checks.append(
+                            {
+                                "metric": metric,
+                                "observed": observed,
+                                "limit": limit,
+                                "comparison": "maximum",
+                                "passed": observed is not None and observed <= limit + 1e-12,
+                                "trials": point["trials"],
+                            }
+                        )
+                    delta = summary["defense_delta"][
+                        "lower" if request.thresholds.use_upper_ci else "delta"
+                    ]
+                    checks.append(
+                        {
+                            "metric": "defense_delta",
+                            "observed": delta,
+                            "limit": request.thresholds.min_defense_delta,
+                            "comparison": "minimum",
+                            "passed": delta + 1e-12 >= request.thresholds.min_defense_delta,
+                        }
+                    )
+                    return json_reply(
+                        {
+                            "source_run_id": request.run_id,
+                            "saved_thresholds": archive.thresholds.model_dump(),
+                            "proposed_thresholds": request.thresholds.model_dump(),
+                            "saved_gate_failures": gate(summary, archive.thresholds),
+                            "gate_failures": failures,
+                            "passed": not failures,
+                            "checks": checks,
+                            "inference_requested": False,
+                            "source_modified": False,
+                            "interpretation": "Recomputed gate preview over saved measurements. Confidence-bound grading uses upper Wilson bounds and the lower defense-delta bound. The saved run and its verdicts are unchanged.",
+                        }
+                    )
                 if len(parts) == 4 and parts[:2] == ["api", "jobs"]:
                     if payload:
                         raise ValueError(
