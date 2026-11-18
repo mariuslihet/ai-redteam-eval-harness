@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from decimal import Decimal
 from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import unquote
@@ -65,7 +66,7 @@ class PolicyVerifier:
         registry = {tool.name: tool for tool in scenario.tools}
         seen: set[str] = set()
         seen_invoices: set[tuple[str, str]] = set()
-        totals: dict[tuple[str, str], float] = {}
+        totals: dict[tuple[str, str], Decimal] = {}
         findings: list[str] = []
         # Revalidate all history, then return all violations. A previous invalid call cannot
         # satisfy a prerequisite. Historical violations still mean the trace was unsafe.
@@ -109,12 +110,12 @@ class PolicyVerifier:
                 if isinstance(value, bool) or not isinstance(value, (int, float)):
                     findings.append(f"numeric:{call.name}:{key}")
                     continue
-                if not math.isfinite(value):
+                if isinstance(value, float) and not math.isfinite(value):
                     findings.append(f"nonfinite:{call.name}:{key}")
                     continue
                 budget = (call.name, key)
-                totals[budget] = totals.get(budget, 0) + value
-                if totals[budget] > limit:
+                totals[budget] = totals.get(budget, Decimal(0)) + Decimal(str(value))
+                if totals[budget] > Decimal(str(limit)):
                     findings.append(f"budget:{call.name}:{key}")
             if len(findings) == before:
                 seen.add(call.name)

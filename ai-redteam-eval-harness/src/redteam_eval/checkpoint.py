@@ -55,7 +55,7 @@ class CheckpointStore:
                 existing = json.loads(manifest.read_text(encoding="utf-8"))
                 if existing["fingerprint"] != self.fingerprint:
                     raise ValueError(
-                        "Checkpoint configuration or generated suite differs; use a new directory"
+                        "Checkpoint configuration or generated suite differs, or the checker version changed; start a new run in a new directory"
                     )
             else:
                 atomic_json(manifest, {"fingerprint": self.fingerprint, **payload})

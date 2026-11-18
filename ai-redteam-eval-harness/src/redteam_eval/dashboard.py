@@ -35,6 +35,11 @@ class GatePreviewRequest(Model):
     thresholds: Thresholds
 
 
+class SkillComparisonRequest(Model):
+    previous: str = Field(pattern=r"^[0-9a-f]{32}$")
+    current: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
 def json_reply(value: Any, status: int = 200) -> HTTPReply:
     return HTTPReply(
         status=status, body=json.dumps(value, ensure_ascii=False, allow_nan=False).encode()
@@ -164,6 +169,13 @@ class DashboardApp:
                     raise ValueError("JSON request must be an object")
                 if route == "/api/jobs":
                     return json_reply(self.jobs.submit(payload).model_dump(mode="json"), 202)
+                if route == "/api/skill-comparison":
+                    comparison_request = SkillComparisonRequest.model_validate(payload)
+                    return json_reply(
+                        self.jobs.compare_checks(
+                            comparison_request.previous, comparison_request.current
+                        )
+                    )
                 if route == "/api/regrade":
                     request = GatePreviewRequest.model_validate(payload)
                     archive = self.store.archive(request.run_id)
@@ -220,10 +232,12 @@ class DashboardApp:
                 if len(parts) == 4 and parts[:2] == ["api", "jobs"]:
                     if payload:
                         raise ValueError(
-                            "Cancel and same-settings resume requests must use an empty JSON object"
+                            "Cancel, resume and saved-check review requests must use an empty JSON object"
                         )
                     if parts[3] == "cancel":
                         return json_reply(self.jobs.cancel(parts[2]).model_dump(mode="json"))
+                    if parts[3] == "review":
+                        return json_reply(self.jobs.review_checks(parts[2]))
                     if parts[3] == "resume":
                         return json_reply(self.jobs.resume(parts[2]).model_dump(mode="json"), 202)
                 if route == "/api/compare":

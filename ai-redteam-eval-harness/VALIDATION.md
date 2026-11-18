@@ -1,16 +1,16 @@
 # Validation record
 
-Validated locally on 17 November 2026 with Python 3.12.14. Changes remain local; no commits
+Validated locally on 18 November 2026 with Python 3.12.14. Changes remain local; no commits
 or pushes were made during this feature extension.
 
 ## Current verification
 
 | Check | Evidence |
 |---|---|
-| Unit and integration tests | 277 offline tests passed on 17 November; four opt-in hardware tests excluded from that offline run |
+| Unit and integration tests | 383 offline tests passed with eight hardware tests deselected. Read-only skill comparison was verified against actual saved Qwen replies; earlier real Qwen continuation and dashboard Stop/Continue checks also passed. The prior complete hardware-enabled suite passed 331 tests before focused runs were added |
 | Live replay workflow | Real evaluation, cancellation/resume, grounded analysis and fresh recorded replay passed on 17 November; advanced hardware probe and arithmetic smoke were also verified on 16 November |
-| Dashboard browser and frontend checks | Real Chrome workflow checks passed at 1440×900 and 390×844; four Node tests passed |
-| Strict typing | mypy passes across 30 source modules |
+| Dashboard browser and frontend checks | Real Chrome workflow checks passed at 1440×900 and 390×844; eight Node tests passed |
+| Strict typing | mypy passes across 31 source modules |
 | Lint and formatting | Ruff checks all source and test files |
 | Readiness and real inference probe | Ollama 0.40.13, Qwen 2.5 7B, actual answer `108` to `93 + 15` |
 | Archive-only regeneration | Rebuilt the six-pair live audit with `inference_requested: false` |
@@ -30,6 +30,43 @@ regression reports are in `reports/features-review`. These artifact directories 
 by Git. Archive regeneration uses measured responses and stored verdicts, recomputes summary
 statistics, and makes no inference calls. It does not independently rejudge saved outputs or
 cryptographically authenticate the archive.
+
+## Checker false-positive and error audit, 18 November
+
+Fixed valid whole-number spelling rejection, floating-point spending accumulation,
+and empty private-value matches. JSON overflow such as `1e9999` now produces a saved
+checker-limit review case instead of a non-finite parsed value that breaks JSON report saving.
+Exact decimal normalization rejects near-integer rounding traps, booleans and strings;
+duplicate JSON keys remain rejected. Large integer tool arguments no longer overflow
+the finite-value check. Real over-limit spending is still detected.
+
+Answer correctness, requested format and reply completion now have separate results.
+Missing finish metadata and server filtering are review cases, and cut-off replies are
+not counted as confirmed wrong answers. Correct fenced JSON remains a format failure
+when the task prohibits Markdown. The saved-check review API recomputes these decisions
+without model calls, job creation or source edits; source-byte preservation and session
+checks are tested. A restart test recovers saved partial replies when the job summary
+was not committed, and malformed recovery files fail visibly. Checker version 0.2.1
+prevents older checkpoint manifests from silently mixing with the new rules.
+
+Controlled tests cover JSON numeric equivalents and precision traps, overflow,
+duplicate keys, signed numbers, format-only errors, unfinished/blocked replies, empty
+private values, decimal budget boundaries, very large tool arguments and restart
+recovery. Eight generated test worlds exercise regular public replies and encoded
+public replies as negative controls, alongside encoded private-value positive controls.
+
+The initial saved-result audit reviewed nine real local report files containing 39
+saved replies and found zero failed-to-passed corrections. This is a review of that
+specific set, not a general false-positive-rate estimate. Its source hashes and
+counts are in `reports/checker-review-20261118/saved-check-audit.json`.
+
+Two actual Qwen round trips are retained in
+`reports/checker-review-20261118/real-response-edge-probes.json`: the model returned
+`{"x":1.0}`, which passed the equivalent-integer check, and `{"x":1e9999}`, which was
+safely retained. The final checker distinguishes this valid numeric spelling outside its supported range from a model format failure and marks it for review. A current parser round-trip record is retained in `real-response-edge-probes-v2.json`. The current live skill workflow passed
+cancellation, retained replies, ten fresh answers and token-limit handling under
+`reports/checker-audit-final-20261118/`. Both hardware tests in the skill-test module
+passed. No model output was replaced with a computed answer.
 
 ## Plain dashboard labels and real model skill tests, 17 November
 
@@ -245,3 +282,31 @@ Conciseness is limited by the evaluation assumptions needed to interpret the res
 Highest-impact follow-ups are independent live verification on vLLM/Transformers and larger
 seeded evaluations. Self-check: the user can review actual responses and reproduce reporting
 without inference or publishing anything.
+
+## Extended skill tests, 18 November
+
+The extended set adds order-record joins with cancellations and discounts, parallel task dependency planning, and exact case-sensitive word counts. Five seeds independently validate computed answers and reject changed answers. The complete 331-test suite passed with all six real-model tests enabled. Both a direct eight-question local Qwen workflow and an eight-question browser-submitted run completed, saved native responses and exposed actual task/format failures. Review summaries include all eight skills and saved runs reload with the correct planned count. Desktop and 390px mobile screenshots were inspected; the live browser check also verifies the 8/24-question estimate and result export. Real-model completion means replies were collected, not that all answers passed. Evidence: `reports/extended-skills-20261118/` and `reports/dashboard-verification/exported-model-skills.json`.
+
+## Focused runs and answer filters, 18 November
+
+Focused runs preserve the full set's seeded questions, IDs and answers, while planned counts, saved summaries, reviews and reloads include only selected skills. Invalid, duplicate, empty and out-of-set choices are rejected before inference. Three seeds check stable question selection; six invalid-selection cases check validation. The real Qwen workflow collected four actual replies for two selected skills, verified original server content and byte-preserving review, and reloaded with the correct count. A browser-submitted single-skill run completed with one actual reply.
+
+Saved-answer search covers prompts, original reply text, computed answers and failure reasons. Skill/outcome filters preserve full-run summaries and exports. Eight frontend tests include filter combinations, legacy failure status, unknown completion distinction and source preservation. The live Chrome workflow checked focused estimates, focus reset after switching sets, empty searches, outcome/skill filtering, clear action, original answer text and recorded reply time. Actual desktop/mobile renders were inspected; mobile filters were expanded to full-width rows so skill and outcome labels remain readable. No canned model completions were introduced.
+
+Five additional corrupt saved-settings cases verify a readable validation error instead of an attribute error during saved-check review.
+
+## Skill continuation and multiple selection, 18 November
+
+The dashboard now supports checkbox selection of several skills and Stop/Continue controls. Continuation checks saved settings, question order and computed answers, checker version, recorded response model identity and the currently installed model digest. It preserves saved replies verbatim and only requests unanswered questions. Saved usage is charged to the original token limit; restored responses and fresh calls are counted separately. The time allowance applies to each continuation. Exhausted or estimated usage, changed model versions, missing usage, damaged checkpoints and completed tests cannot continue.
+
+All 357 offline tests passed, with eight opt-in hardware tests deselected. Eighteen new offline cases cover authentic fixture identity, saved prefixes, modified/reordered/duplicate questions, settings, seeds, usage, model identity, checker version, count limits, busy/completed jobs, exhausted allowances and changed installed versions. The actual Qwen test passed cancellation, manager restart, completion of only the remaining questions, preservation of the saved prefix and restored-token accounting. The real Chrome workflow selected two skills with three questions each, stopped after an actual saved answer, continued to six saved replies and verified the preserved prefix and fresh/restored counts. Eight frontend tests passed; lint, formatting and typing passed.
+
+The recorded skill fixture is the unchanged four-reply Qwen file from the earlier focused-run audit, retained at `tests/fixtures/measured-qwen-skills.json` with SHA256 `d3470cd7dd1608f1a175df4d62f280abb770b3cd756a6cfb7bdc3a8805ba3223`. Tests derive interrupted checkpoint metadata from it without inventing completions. Actual continuation evidence remains under `reports/skill-continuation-20261118/` and the dashboard job history. Desktop and mobile renders were inspected; the saved-run selector and actions were given separate columns to prevent long selections overlapping buttons.
+
+## Saved skill comparison, 18 November
+
+Compare two saved skill tests through the local dashboard or protected `POST /api/skill-comparison`. Both saved replies are checked with the same current checker. Matching requires identical question IDs, prompts, answer types, skills, computed answers and rules. Changed questions and missing replies are excluded with explicit counts and IDs. Duplicate IDs are rejected. Confirmed changes are separated from incomplete or unconfirmed replies; original saved pass/fail flags remain in the export. Partial and identical-source comparisons have explicit notices.
+
+Token and timing differences cover only matched pairs with usable recorded data on both sides. Missing/estimated usage is excluded, with pair coverage shown. Unsupported timing values remain unknown, including excessively large integers. These differences describe recorded replies, not general model performance. Expanded questions show both actual replies, expected answers and failure reasons; JSON export retains the exact saved response records.
+
+Twenty-six new offline tests cover exact alignment, duplicate/reordered/changed/missing questions, empty overlap, outcome transitions, current-checker consistency, native completion-metadata recovery, missing finish information, measurement coverage, invalid timing values and protected read-only API behavior. API tests verify unchanged file hashes and no active model job. All 383 offline tests passed, with eight optional hardware tests deselected; eight frontend tests, lint, formatting and typing also passed. The real Chrome workflow compared a saved test with itself and two distinct actual Qwen runs, checked unchanged job data, opened original replies and verified the exported result. Desktop and 390px mobile renders were inspected, without page-width overflow. Evidence: `reports/dashboard-verification/exported-skill-comparison.json` and `skill-comparison-*.png`. No fresh model replies were needed for comparison.

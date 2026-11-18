@@ -56,3 +56,15 @@ export function filterPairs(pairs, {query = "", family = "", distribution = "", 
 }
 export function tokenTotal(summary) { return [summary.baseline, summary.hardened].reduce((total, item) => total + item.target_tokens + item.attacker_tokens + item.judge_tokens, 0); }
 export function duration(ms) { return Number.isFinite(ms) ? `${(ms / 1000).toFixed(2)} s` : "—"; }
+
+export function filterSkillResults(results, {query = "", skill = "", status = ""} = {}) {
+  const needle = query.trim().toLocaleLowerCase();
+  return results.filter(item => {
+    if (skill && item.question.skill !== skill) return false;
+    if (status === "failed" && item.grade.passed !== false) return false;
+    if (status && status !== "failed" && (item.grade.status || (item.grade.passed ? "passed" : "legacy_failure")) !== status) return false;
+    return !needle || [item.question.id, item.question.skill, item.question.prompt,
+      item.response.text, JSON.stringify(item.question.expected), ...(item.grade.problems || [])]
+      .join("\n").toLocaleLowerCase().includes(needle);
+  });
+}

@@ -22,6 +22,7 @@ class ExecutionRecord(Model):
     model_responses: int = Field(default=0, ge=0)
     estimated_responses: int = Field(default=0, ge=0)
     restored_pairs: int = Field(default=0, ge=0)
+    restored_responses: int = Field(default=0, ge=0)
     request_attempts: int = Field(default=0, ge=0)
     failed_attempts: int = Field(default=0, ge=0)
     elapsed_seconds: float = Field(default=0, ge=0)
@@ -71,6 +72,13 @@ class RunBudget:
         self.record.restored_tokens += sum(u.input_tokens + u.output_tokens for u in usages)
         self.record.total_tokens = self.record.observed_tokens + self.record.restored_tokens
         self.check(any(u.estimated for u in usages))
+
+    def restore_response(self, usage: Usage) -> None:
+        """Charge a preserved reply without counting it as a fresh model call."""
+        self.record.restored_responses += 1
+        self.record.restored_tokens += usage.input_tokens + usage.output_tokens
+        self.record.total_tokens = self.record.observed_tokens + self.record.restored_tokens
+        self.check(usage.estimated)
 
     def check(self, estimated: bool) -> None:
         cap = self.record.max_total_tokens

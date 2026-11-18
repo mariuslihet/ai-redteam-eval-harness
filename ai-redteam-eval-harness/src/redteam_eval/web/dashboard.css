@@ -15,3 +15,12 @@
 .skills-results{margin-top:26px;border-top:1px solid var(--line);padding-top:10px}.skills-results .panel-heading{padding:12px 0}.skills-history-label{display:grid;gap:8px;font-size:12px;min-width:0}.skills-results pre{max-height:360px;overflow:auto}.skills-results .inspection-detail{margin-inline:0}.skills-results table{min-width:500px}.skills-results p{font-size:12px;line-height:1.8}
 
 @media(max-width:640px){.skills-results .panel-heading{display:block}.skills-history-label{width:100%}.skills-history-label select{width:100%;max-width:100%;min-width:0}.skills-results .panel-heading button{margin-top:12px}}
+
+.skills-result-actions{display:flex;gap:8px;flex-wrap:wrap}.skills-results .skills-result-actions button{margin-top:0}.skills-results table{min-width:750px}
+.skills-filters{display:grid;grid-template-columns:2fr 1.3fr 1.2fr auto;align-items:end;padding:12px 0;gap:12px}.skills-filters label{display:grid;gap:6px;min-width:0}.skills-filters input,.skills-filters select{width:100%;min-width:0}.skills-filters button{align-self:end}
+@media(max-width:640px){.skills-filters{grid-template-columns:1fr}.skills-filters button{justify-self:start}}
+.skills-picks{border:1px solid var(--line);border-radius:6px;padding:12px}.skills-picks legend{font-size:12px;padding:0 6px}#skills-pick-options{display:grid;grid-template-columns:1fr 1fr;gap:12px}#skills-pick-options label{display:flex;gap:10px;align-items:center}#skills-pick-options input{width:18px;height:18px;flex-shrink:0;accent-color:var(--teal)}
+@media(max-width:640px){#skills-pick-options{grid-template-columns:1fr}}
+.skills-results .panel-heading{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}.skills-history-label select{width:100%;max-width:100%;min-width:0}.skills-result-actions{justify-content:flex-end}
+@media(max-width:640px){.skills-results .panel-heading{grid-template-columns:minmax(0,1fr)}.skills-result-actions{justify-content:flex-start}}
+#skills-comparison{margin:18px 0;padding:14px;border:1px solid var(--line);border-radius:6px}#skills-comparison>summary{cursor:pointer;font-weight:600}#skills-compare-form select{min-width:0;width:100%;max-width:100%}#skills-compare-form .skills-result-actions{margin-top:14px;justify-content:flex-start}#skills-compare-result pre{white-space:pre-wrap;overflow-wrap:anywhere}

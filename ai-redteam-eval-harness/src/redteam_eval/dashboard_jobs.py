@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import threading
 import uuid
@@ -10,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 import httpx
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from redteam_eval.archive import load_archive
 from redteam_eval.backends import HTTPBackend, loopback_url
@@ -19,7 +20,13 @@ from redteam_eval.campaign import CampaignSpec, run_campaign
 from redteam_eval.checkpoint import atomic_json
 from redteam_eval.dashboard_data import ReportStore, artifact_id
 from redteam_eval.inspection import inspect_pair
-from redteam_eval.model_checks import grade_skill, skill_questions, skill_summary
+from redteam_eval.model_checks import (
+    grade_skill,
+    review_skill_results,
+    skill_names,
+    skill_questions,
+    skill_summary,
+)
 from redteam_eval.models import (
     BackendConfig,
     GuardConfig,
@@ -27,6 +34,7 @@ from redteam_eval.models import (
     Model,
     PairResult,
     Request,
+    Response,
     RunConfig,
     Thresholds,
     derive_seed,
@@ -34,6 +42,7 @@ from redteam_eval.models import (
 from redteam_eval.replay import plan_digest, validate_replay
 from redteam_eval.reporting import write_reports
 from redteam_eval.runner import Runner
+from redteam_eval.skill_comparison import compare_skill_results
 from redteam_eval.synthesis import synthesize
 
 
@@ -82,9 +91,16 @@ class ModelCheckRequest(Model):
     model: str = Field(min_length=1, max_length=200)
     seed: int = Field(default=1729, ge=0, le=2**31 - 1)
     cases_per_skill: int = Field(default=1, ge=1, le=3)
+    test_suite: Literal["basic", "extended"] = "basic"
+    selected_skills: list[str] | None = Field(default=None, min_length=1, max_length=8)
     max_tokens: int = Field(default=512, ge=64, le=2048)
     max_total_tokens: int = Field(default=50000, ge=1, le=200000)
     max_run_seconds: float = Field(default=300, ge=1, le=1200, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_skills(self) -> ModelCheckRequest:
+        skill_names(self.test_suite, self.selected_skills)
+        return self
 
 
 class EvidenceObservation(Model):
@@ -245,11 +261,43 @@ class JobManager:
                 job = DashboardJob.model_validate_json(path.read_text(encoding="utf-8"))
                 if job.id != path.parent.name:
                     continue
+                if job.action == "check_model" and job.status in ("running", "queued", "failed"):
+                    saved_path = store.bounded_path(path.parent / "model-checks.json")
+                    try:
+                        if saved_path.exists():
+                            if saved_path.stat().st_size > 64 * 1024 * 1024:
+                                raise ValueError("Saved skill report is too large")
+                            record = json.loads(saved_path.read_text(encoding="utf-8"))
+                            request = ModelCheckRequest.model_validate(job.request)
+                            if (
+                                not isinstance(record, dict)
+                                or record.get("model") != request.model
+                                or record.get("seed") != request.seed
+                                or not isinstance(record.get("results"), list)
+                                or len(record["results"])
+                                > len(skill_names(request.test_suite, request.selected_skills))
+                                * request.cases_per_skill
+                            ):
+                                raise ValueError("Saved skill report does not match this job")
+                            if record["results"]:
+                                review_skill_results(record)
+                            if (
+                                len(record["results"]) > len((job.result or {}).get("results", []))
+                                or job.result is None
+                            ):
+                                job.result = record
+                    except (ValueError, OSError, TypeError, KeyError) as exc:
+                        job.status, job.error = (
+                            "failed",
+                            f"Saved skill replies could not be recovered: {exc}",
+                        )
                 if job.status in ("running", "queued"):
                     job.status, job.error = (
                         "failed",
                         "Dashboard restarted before the job finished; committed checkpoints remain resumable.",
                     )
+                    if job.action == "check_model":
+                        job.error = "The app restarted before the skill test finished. Saved replies are available; continue the remaining questions with the same settings."
                 self.jobs[job.id] = job
             except (ValueError, OSError):
                 continue
@@ -345,7 +393,9 @@ class JobManager:
 
     def _start(self, job: DashboardJob) -> None:
         self.active, self.cancel_requested, self.budget, self.runner = job.id, False, None, None
-        job.status, job.error, job.result = "queued", None, None
+        job.status, job.error = "queued", None
+        if job.action != "check_model":
+            job.result = None
         self.save(job)
         threading.Thread(
             target=self._worker, args=(job.id,), daemon=True, name=f"dashboard-{job.id[:8]}"
@@ -356,14 +406,78 @@ class JobManager:
             job = self.jobs[identifier]
             if (
                 self.active is not None
-                or job.action not in ("evaluate", "replay")
+                or job.action not in ("evaluate", "replay", "check_model")
                 or job.status not in ("failed", "cancelled")
             ):
                 raise RuntimeError(
-                    "Only a stopped evaluation can resume when the local worker is idle"
+                    "Only a stopped evaluation or skill test can resume when the local worker is idle"
                 )
+            if job.action == "check_model":
+                record = self._skill_checkpoint(job)
+                request = ModelCheckRequest.model_validate(job.request)
+                total = (
+                    len(skill_names(request.test_suite, request.selected_skills))
+                    * request.cases_per_skill
+                )
+                if len(record["results"]) >= total:
+                    raise ValueError(
+                        "All questions already have saved replies; start a new run to repeat them"
+                    )
+                budget = RunBudget(RunConfig(max_total_tokens=request.max_total_tokens))
+                for item in record["results"]:
+                    budget.restore_response(Response.model_validate(item["response"]).usage)
+                if budget.record.total_tokens >= request.max_total_tokens:
+                    raise ValueError(
+                        "The saved replies exhausted this run's token allowance; start a new run with a larger allowance"
+                    )
+                job.result = record
             self._start(job)
             return job.model_copy(deep=True)
+
+    def _skill_checkpoint(self, job: DashboardJob) -> dict[str, Any]:
+        """Validate preserved questions and model identity before continuing inference."""
+        request = ModelCheckRequest.model_validate(job.request)
+        path = self.store.bounded_path(self.directory / job.id / "model-checks.json")
+        if not path.exists() or path.stat().st_size > 64 * 1024 * 1024:
+            raise ValueError("No readable saved skill replies; start a new run")
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(record, dict)
+            or record.get("grader_version") != 2
+            or record.get("test_set") != f"{request.test_suite}-skills-v1"
+            or record.get("model") != request.model
+            or record.get("seed") != request.seed
+            or not record.get("model_digest")
+            or not isinstance(record.get("results"), list)
+            or ModelCheckRequest.model_validate(record.get("settings")) != request
+        ):
+            raise ValueError("Saved skill settings or checker version changed; start a new run")
+        questions = skill_questions(
+            request.seed, request.cases_per_skill, request.test_suite, request.selected_skills
+        )
+        rows = record["results"]
+        if len(rows) > len(questions):
+            raise ValueError("Saved question count exceeds the planned test")
+        for question, item in zip(questions, rows):
+            if not isinstance(item, dict) or item.get("question") != question.model_dump(
+                mode="json"
+            ):
+                raise ValueError("Saved questions changed or are out of order; start a new run")
+            raw = item.get("response")
+            if (
+                not isinstance(raw, dict)
+                or not isinstance(raw.get("usage"), dict)
+                or not {"input_tokens", "output_tokens", "estimated"}.issubset(raw["usage"])
+            ):
+                raise ValueError(
+                    "Saved reply is missing usage records; its remaining allowance cannot be established"
+                )
+            response = Response.model_validate(raw)
+            if response.model_digest != record["model_digest"]:
+                raise ValueError("Saved replies do not match the recorded model version")
+        if rows:
+            review_skill_results(record)
+        return record
 
     def cancel(self, identifier: str) -> DashboardJob:
         with self.lock:
@@ -401,7 +515,20 @@ class JobManager:
                 )
             if job.action == "check_model":
                 result["completed_checks"] = len((job.result or {}).get("results", []))
-                result["total_checks"] = 5 * int(job.request.get("cases_per_skill", 1))
+                result["total_checks"] = len(
+                    skill_names(
+                        job.request.get("test_suite", "basic"), job.request.get("selected_skills")
+                    )
+                ) * int(job.request.get("cases_per_skill", 1))
+                result["remaining_checks"] = max(
+                    0, result["total_checks"] - result["completed_checks"]
+                )
+                result["can_continue"] = bool(
+                    job.status in ("failed", "cancelled")
+                    and job.result is not None
+                    and job.result.get("grader_version") == 2
+                    and result["remaining_checks"]
+                )
             return result
 
     def snapshots(self) -> list[dict[str, Any]]:
@@ -410,6 +537,30 @@ class JobManager:
                 self.snapshot(job.id)
                 for job in sorted(self.jobs.values(), key=lambda job: job.created_at, reverse=True)
             ]
+
+    def review_checks(self, identifier: str) -> dict[str, Any]:
+        with self.lock:
+            job = self.jobs[identifier]
+            if job.action != "check_model" or job.result is None:
+                raise ValueError("Choose a skill run with saved replies to review")
+            record = copy.deepcopy(job.result)
+        return {"job_id": identifier, **review_skill_results(record)}
+
+    def compare_checks(self, previous: str, current: str) -> dict[str, Any]:
+        with self.lock:
+            jobs = [self.jobs[identifier] for identifier in (previous, current)]
+            if any(
+                job.action != "check_model" or not job.result or not job.result.get("results")
+                for job in jobs
+            ):
+                raise ValueError("Choose two skill tests with saved replies")
+            records = [copy.deepcopy(job.result or {}) for job in jobs]
+        return {
+            "previous_job_id": previous,
+            "current_job_id": current,
+            "same_source": previous == current,
+            **compare_skill_results(records[0], records[1]),
+        }
 
     def _worker(self, identifier: str) -> None:
         job = self.jobs[identifier]
@@ -536,7 +687,12 @@ class JobManager:
 
     async def _check_model(self, job: DashboardJob) -> None:
         request = ModelCheckRequest.model_validate(job.request)
+        previous = self._skill_checkpoint(job) if job.result is not None else None
         config = await self.selected_backend(request.model)
+        if previous is not None and previous["model_digest"] != config.expected_digest:
+            raise ValueError(
+                "The installed model version changed; start a new run instead of mixing model versions"
+            )
         backend = HTTPBackend(config)
         budget = RunBudget(
             RunConfig(
@@ -546,19 +702,23 @@ class JobManager:
             )
         )
         self.budget = budget
-        results: list[dict[str, Any]] = []
+        results: list[dict[str, Any]] = copy.deepcopy(previous["results"]) if previous else []
         directory = self.store.bounded_path(self.directory / job.id)
         record: dict[str, Any] = {
             "format_version": 1,
-            "test_set": "basic-skills-v1",
+            "grader_version": 2,
+            "continuations": int(previous.get("continuations", 0)) + 1 if previous else 0,
+            "restored_checks": len(results),
+            "test_set": f"{request.test_suite}-skills-v1",
             "settings": request.model_dump(mode="json"),
             "model": config.model,
             "model_digest": config.expected_digest,
             "seed": request.seed,
             "status": "running",
-            "results": [],
-            "summary": skill_summary([]),
-            "total_checks": 5 * request.cases_per_skill,
+            "results": list(results),
+            "summary": skill_summary(results, request.test_suite, request.selected_skills),
+            "total_checks": len(skill_names(request.test_suite, request.selected_skills))
+            * request.cases_per_skill,
             "interpretation": "These are sampled task checks, not a general model rating. Expected answers are computed by code. Only actual model replies are graded; no response schema forces the answer format.",
         }
 
@@ -568,15 +728,24 @@ class JobManager:
                 **record,
                 "status": status,
                 "results": list(results),
-                "summary": skill_summary(results),
+                "summary": skill_summary(results, request.test_suite, request.selected_skills),
             }
             job.result = record
             atomic_json(directory / "model-checks.json", record)
+            self.save(job)
 
         try:
+            for item in results:
+                budget.restore_response(Response.model_validate(item["response"]).usage)
             persist("running")
             async with asyncio.timeout(request.max_run_seconds):
-                for question in skill_questions(request.seed, request.cases_per_skill):
+                questions = skill_questions(
+                    request.seed,
+                    request.cases_per_skill,
+                    request.test_suite,
+                    request.selected_skills,
+                )
+                for question in questions[len(results) :]:
                     budget.before_request()
                     response = await backend.generate(
                         Request(

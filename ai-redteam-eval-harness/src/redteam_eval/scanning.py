@@ -126,6 +126,8 @@ class CanaryScanner:
                 if index in found:
                     continue
                 canonical = normalize(secret)
+                if not canonical.strip():
+                    continue
                 compact_secret = re.sub(r"[^A-Za-z0-9]", "", canonical)
                 if canonical in view or (len(compact_secret) >= 8 and compact_secret in compact):
                     found[index] = Leak(

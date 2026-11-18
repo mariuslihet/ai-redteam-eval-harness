@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {modeName, outcomeName, capabilityName, problemName, filterPairs, filterRuns, interval, nativeText, nativeTools, pairReasons, percent, tokenTotal, traceState} from '../src/redteam_eval/web/dashboard-core.mjs';
+import {modeName, outcomeName, capabilityName, problemName, filterPairs, filterRuns, filterSkillResults, interval, nativeText, nativeTools, pairReasons, percent, tokenTotal, traceState} from '../src/redteam_eval/web/dashboard-core.mjs';
 
 const recording = JSON.parse(readFileSync(new URL('./fixtures/measured-qwen-run.json', import.meta.url)));
 const pairs = recording.results;
@@ -63,4 +63,26 @@ test('display labels use plain words while saved reply access stays exact',()=>{
  assert.equal(labels[1],'Task completed');
  assert.equal(labels[2],'Private test value 1 found (base64)');
  assert.equal(nativeText(pairs[0].baseline.turns[0]),pairs[0].baseline.turns[0].response.raw_text ?? pairs[0].baseline.turns[0].response.text);
+});
+
+
+test('skill filters preserve recorded replies and keep unconfirmed failures distinct', () => {
+  // Recorded replies, not a completion backend; expected outputs belong to checker tests.
+  const source=JSON.parse(readFileSync(new URL('./fixtures/measured-qwen-run.json', import.meta.url)));
+  const response=source.results[0].baseline.turns[0].response;
+  const statuses=['passed','wrong_answer','format_error','incomplete','needs_review','unexpected_tool'];
+  const rows=statuses.map((status,index)=>({question:{id:`filter-${index}`,skill:index % 2 ? 'Arithmetic' : 'JSON output',prompt:`Recorded response ${index}`,expected:{count:index}},response,grade:{status,passed:status==='passed',problems:[`reason-${index}`]}}));
+  const original=JSON.stringify(rows);
+  assert.equal(filterSkillResults(rows).length,6);
+  assert.equal(filterSkillResults(rows,{status:'failed'}).length,5);
+  assert.equal(filterSkillResults(rows,{status:'wrong_answer'}).length,1);
+  assert.equal(filterSkillResults(rows,{status:'needs_review'})[0],rows[4]);
+  assert.equal(filterSkillResults(rows,{skill:'Arithmetic',status:'failed'}).length,3);
+  assert.equal(filterSkillResults(rows,{query:'REASON-2'})[0],rows[2]);
+  assert.equal(filterSkillResults(rows,{query:'"count":3'})[0],rows[3]);
+  assert.equal(filterSkillResults(rows,{query:response.text}).length,6);
+  assert.equal(filterSkillResults(rows,{query:'no such saved answer'}).length,0);
+  const legacy={...rows[1],grade:{passed:false,problems:[]}};
+  assert.deepEqual(filterSkillResults([legacy],{status:'legacy_failure'}),[legacy]);
+  assert.equal(JSON.stringify(rows),original);
 });

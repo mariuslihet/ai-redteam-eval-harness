@@ -76,7 +76,6 @@ def test_computed_answers_satisfy_the_answer_checker(seed):
     [
         '{"x":1,"x":1}',
         '{"x":true}',
-        '{"x":1.0}',
         '{"x":"1"}',
         '{"x":1,"extra":0}',
         '```json\n{"x":1}\n```',
@@ -186,3 +185,38 @@ def test_actual_model_skills_cancellation_limits_and_saved_native_replies(tmp_pa
     assert failed["result"]["status"] == "budget_exceeded"
     assert failed["completed_checks"] == 1
     assert len(failed["result"]["results"]) == 1
+
+
+@pytest.mark.local_llm
+async def test_actual_numeric_replies_remain_safe_to_grade_and_save(tmp_path):
+    from redteam_eval.backends import HTTPBackend
+    from redteam_eval.models import Message, Request
+
+    model = os.getenv("REDTEAM_LOCAL_MODEL")
+    if not model:
+        pytest.skip("Set REDTEAM_LOCAL_MODEL for actual installed inference")
+    manager = JobManager(ReportStore(tmp_path), BackendConfig(model=model))
+    backend = HTTPBackend(await manager.selected_backend(model))
+    results = []
+    for literal in ('{"x":1.0}', '{"x":1e9999}'):
+        q = SkillQuestion(
+            id="numeric-probe",
+            skill="JSON output",
+            prompt="Reply with this JSON object only, without Markdown: " + literal,
+            expected={"x": 1},
+            answer_type="json",
+            rule="Actual model numeric-format probe",
+        )
+        response = await backend.generate(
+            Request(
+                messages=[Message(role="user", content=q.prompt)], seed=20261118, max_tokens=128
+            )
+        )
+        grade = grade_skill(q, response)
+        assert response.response_envelope["model"] == model
+        results.append({"response": response.model_dump(mode="json"), "grade": grade})
+        json.dumps(results, allow_nan=False)
+        if response.text.strip() == '{"x":1.0}':
+            assert grade["passed"]
+        if "1e9999" in response.text:
+            assert not grade["passed"]
