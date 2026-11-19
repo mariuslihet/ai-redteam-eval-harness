@@ -52,7 +52,7 @@ def test_questions_are_seeded_and_expansion_preserves_existing_questions(seed):
             assert q.expected == sorted(set(values))
 
 
-@pytest.mark.parametrize("count", [0, 4, -1])
+@pytest.mark.parametrize("count", [0, 11, -1])
 def test_invalid_question_counts_are_rejected(count):
     with pytest.raises(ValueError):
         skill_questions(0, count)
@@ -124,7 +124,7 @@ def test_sorting_failure_explains_missing_added_and_out_of_order_numbers():
 @pytest.mark.parametrize(
     "extra",
     [
-        {"cases_per_skill": 4},
+        {"cases_per_skill": 11},
         {"seed": -1},
         {"max_run_seconds": float("inf")},
         {"max_total_tokens": 0},

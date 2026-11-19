@@ -16,11 +16,13 @@ from urllib.parse import unquote, urlsplit
 from pydantic import Field, ValidationError
 
 from redteam_eval.dashboard_data import ReportStore
-from redteam_eval.dashboard_jobs import JobManager
+from redteam_eval.dashboard_jobs import JobManager, ModelCheckRequest
 from redteam_eval.inspection import inspect_pair
 from redteam_eval.models import BackendConfig, Model, Thresholds
 from redteam_eval.regression import RegressionLimits, compare_runs
 from redteam_eval.reporting import gate, summarize
+from redteam_eval.review_notes import NoteRequest
+from redteam_eval.skill_tools import build_skill_plan
 
 
 class HTTPReply(Model):
@@ -38,6 +40,10 @@ class GatePreviewRequest(Model):
 class SkillComparisonRequest(Model):
     previous: str = Field(pattern=r"^[0-9a-f]{32}$")
     current: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
+class SkillRetryRequest(Model):
+    model: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 def json_reply(value: Any, status: int = 200) -> HTTPReply:
@@ -163,12 +169,29 @@ class DashboardApp:
                 )
             if method == "GET" and len(parts) == 3 and parts[:2] == ["api", "jobs"]:
                 return json_reply(self.jobs.snapshot(parts[2]))
+            if method == "GET" and len(parts) == 4 and parts[:2] == ["api", "jobs"]:
+                if parts[3] == "notes":
+                    return json_reply(self.jobs.notes(parts[2]))
+                if parts[3] == "performance":
+                    return json_reply(self.jobs.performance(parts[2]))
+                if parts[3] == "report.html":
+                    return HTTPReply(
+                        status=200,
+                        body=self.jobs.html_report(parts[2]).encode("utf-8"),
+                        content_type="text/html; charset=utf-8",
+                        headers={
+                            "Content-Disposition": f'attachment; filename="skills-{parts[2]}.html"'
+                        },
+                    )
             if method == "POST":
                 payload = json.loads(body)
                 if not isinstance(payload, dict):
                     raise ValueError("JSON request must be an object")
                 if route == "/api/jobs":
                     return json_reply(self.jobs.submit(payload).model_dump(mode="json"), 202)
+                if route == "/api/skill-plan":
+                    plan_request = ModelCheckRequest.model_validate(payload)
+                    return json_reply(build_skill_plan(plan_request.model_dump(mode="json")))
                 if route == "/api/skill-comparison":
                     comparison_request = SkillComparisonRequest.model_validate(payload)
                     return json_reply(
@@ -230,6 +253,18 @@ class DashboardApp:
                         }
                     )
                 if len(parts) == 4 and parts[:2] == ["api", "jobs"]:
+                    if parts[3] == "retry":
+                        retry_request = SkillRetryRequest.model_validate(payload)
+                        return json_reply(
+                            self.jobs.retry_checks(parts[2], retry_request.model).model_dump(
+                                mode="json"
+                            ),
+                            202,
+                        )
+                    if parts[3] == "notes":
+                        return json_reply(
+                            self.jobs.notes(parts[2], NoteRequest.model_validate(payload))
+                        )
                     if payload:
                         raise ValueError(
                             "Cancel, resume and saved-check review requests must use an empty JSON object"

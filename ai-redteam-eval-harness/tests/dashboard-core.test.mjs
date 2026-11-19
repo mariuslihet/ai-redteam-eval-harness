@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {modeName, outcomeName, capabilityName, problemName, filterPairs, filterRuns, filterSkillResults, interval, nativeText, nativeTools, pairReasons, percent, tokenTotal, traceState} from '../src/redteam_eval/web/dashboard-core.mjs';
+import {modeName, outcomeName, capabilityName, problemName, filterPairs, filterRuns, filterSkillResults, filterSkillJobs, interval, nativeText, nativeTools, pairReasons, percent, tokenTotal, traceState} from '../src/redteam_eval/web/dashboard-core.mjs';
 
 const recording = JSON.parse(readFileSync(new URL('./fixtures/measured-qwen-run.json', import.meta.url)));
 const pairs = recording.results;
@@ -85,4 +85,16 @@ test('skill filters preserve recorded replies and keep unconfirmed failures dist
   const legacy={...rows[1],grade:{passed:false,problems:[]}};
   assert.deepEqual(filterSkillResults([legacy],{status:'legacy_failure'}),[legacy]);
   assert.equal(JSON.stringify(rows),original);
+});
+
+
+test('skill history search combines saved metadata without changing jobs',()=>{
+ const jobs=[{id:'a',action:'check_model',status:'complete',request:{model:'Local Qwen',seed:1729,test_suite:'extended',difficulty:'challenging',selected_skills:['Arithmetic']}},{id:'b',action:'check_model',status:'cancelled',request:{model:'Other model',seed:42}},{id:'c',action:'evaluate',status:'complete',request:{model:'Local Qwen'}}];
+ const before=JSON.stringify(jobs);
+ assert.equal(filterSkillJobs(jobs).length,2);
+ for(const query of ['qwen','1729','EXTENDED','challenging','Arithmetic','complete']) assert.deepEqual(filterSkillJobs(jobs,query),[jobs[0]]);
+ assert.deepEqual(filterSkillJobs(jobs,'standard'),[jobs[1]]);
+ assert.deepEqual(filterSkillJobs(jobs,'cancelled'),[jobs[1]]);
+ assert.equal(filterSkillJobs(jobs,'no matching test').length,0);
+ assert.equal(JSON.stringify(jobs),before);
 });

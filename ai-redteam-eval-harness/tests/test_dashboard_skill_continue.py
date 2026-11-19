@@ -71,6 +71,7 @@ def test_partial_checkpoint_validates_without_inference_or_source_edits(tmp_path
     "damage",
     [
         "question",
+        "expected_type",
         "order",
         "duplicate",
         "model",
@@ -86,6 +87,10 @@ def test_changed_checkpoints_are_rejected_before_worker_starts(tmp_path, recorde
     record = copy.deepcopy(recorded_skills)
     if damage == "question":
         record["results"][0]["question"]["expected"] += 1
+    elif damage == "expected_type":
+        record["results"][0]["question"]["expected"] = float(
+            record["results"][0]["question"]["expected"]
+        )
     elif damage == "order":
         record["results"][:2] = reversed(record["results"][:2])
     elif damage == "duplicate":
