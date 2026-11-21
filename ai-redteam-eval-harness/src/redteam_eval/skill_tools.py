@@ -21,6 +21,7 @@ def build_skill_plan(settings: dict[str, Any]) -> dict[str, Any]:
         settings.get("selected_skills"),
         settings.get("difficulty", "standard"),
         settings.get("question_ids"),
+        settings.get("custom_cases"),
     )
     rows: list[dict[str, Any]] = [
         {
@@ -46,7 +47,7 @@ def build_skill_plan(settings: dict[str, Any]) -> dict[str, Any]:
         "questions": rows,
         "inference_requested": False,
         "source_modified": False,
-        "interpretation": "This is a generated test plan, not model output. Expected answers are computed for inspection and are not added to the model request. Input tokens are a rough characters/4 estimate, not tokenizer measurements; chat framing, cache behavior and model tokenization can differ. Maximum output is a limit, not predicted usage. Time and token allowances can stop a run early.",
+        "interpretation": "This is a generated test plan, not model output. Expected answers are included for inspection and are not added to the model request. Custom expected answers are author supplied and are not independently verified. Input tokens are a rough characters/4 estimate, not tokenizer measurements; chat framing, cache behavior and model tokenization can differ. Maximum output is a limit, not predicted usage. Time and token allowances can stop a run early.",
     }
 
 
@@ -123,6 +124,6 @@ def skill_html_report(record: dict[str, Any], job_id: str, status: str) -> str:
     for row in review["results"]:
         grade, q = row["grade"], row["question"]
         sections.append(
-            f"<section><h2>{escape(q['skill'])} · {escape(grade['status'])}</h2><p>Question {escape(q['id'])} · Original saved result: {'passed' if row['previous_passed'] else 'failed'}. Current check: {escape(grade['status'])}.</p><h3>Task</h3><pre>{escape(q['prompt'])}</pre><h3>Actual model reply</h3><pre>{escape(row['response'].get('text', ''))}</pre><h3>Computed answer</h3><pre>{pretty(q['expected'])}</pre><p>{escape(q['rule'])}</p><h3>Current check details</h3><pre>{pretty(grade)}</pre></section>"
+            f"<section><h2>{escape(q['skill'])} · {escape(grade['status'])}</h2><p>Question {escape(q['id'])} · Original saved result: {'passed' if row['previous_passed'] else 'failed'}. Current check: {escape(grade['status'])}.</p><h3>Task</h3><pre>{escape(q['prompt'])}</pre><h3>Actual model reply</h3><pre>{escape(row['response'].get('text', ''))}</pre><h3>Expected answer</h3><pre>{pretty(q['expected'])}</pre><p>{escape(q['rule'])}</p><h3>Current check details</h3><pre>{pretty(grade)}</pre></section>"
         )
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><title>Model skill report</title><style>body{{font:15px/1.6 system-ui,sans-serif;max-width:1000px;margin:32px auto;padding:0 20px;color:#172c3d}}section{{border-top:1px solid #ccd7df;margin-top:28px}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f5f7;padding:16px;border-radius:6px}}h1,h2,h3{{line-height:1.3}}p{{overflow-wrap:anywhere}}@media print{{section{{break-inside:avoid}}}}</style></head><body><h1>Model skill report</h1><p>Saved run {escape(job_id)} · {escape(status)} · {len(review["results"])} actual saved replies</p><p>Model: {escape(record.get("model"))}<br>Model version: {escape(record.get("model_digest"))}</p><p>This portable report contains original saved replies and current answer checks. It makes no model calls. An incomplete run includes only available replies. No scripts or external resources are required.</p><h2>Saved settings</h2><pre>{pretty(record.get("settings", {}))}</pre><h2>Recorded performance</h2><pre>{pretty(performance)}</pre>{"".join(sections)}<details><summary>Original saved report</summary><pre>{pretty(record)}</pre></details></body></html>"""

@@ -26,12 +26,18 @@ from redteam_eval.regression import (
 from redteam_eval.replay import plan_digest
 from redteam_eval.reporting import gate, summarize, write_reports
 from redteam_eval.runner import Runner
+from redteam_eval.skill_audit import audit_saved_skills
 
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Offline procedural local-LLM security benchmark")
     p.add_argument("--config", type=Path, help="RunConfig JSON; cannot combine with run overrides")
     source = p.add_mutually_exclusive_group()
+    source.add_argument(
+        "--audit-skills",
+        action="store_true",
+        help="Audit saved model answers without inference or source edits; prints JSON",
+    )
     source.add_argument(
         "--dashboard", action="store_true", help="Open the local measured-results dashboard server"
     )
@@ -237,6 +243,25 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.probe and not args.doctor:
             raise ValueError("--probe requires --doctor")
+        if args.audit_skills:
+            if (
+                args.config
+                or args.checkpoint
+                or args.compare_to
+                or args.seeds
+                or has_run_overrides(args)
+                or args.max_total_tokens is not None
+                or args.max_run_seconds is not None
+            ):
+                raise ValueError(
+                    "Saved-answer audit cannot combine with inference settings, checkpoints or comparisons"
+                )
+            print(
+                json.dumps(
+                    audit_saved_skills(args.reports_root), ensure_ascii=False, allow_nan=False
+                )
+            )
+            return 0
         if args.dashboard:
             if args.seeds or args.checkpoint or args.compare_to:
                 raise ValueError(

@@ -159,6 +159,34 @@ Version **0.2.1** also fixes decimal-spending
 checks and ignores empty private test values. Older evaluation checkpoints require
 a new run after the checker version changes; saved reports remain available.
 
+### Auditing saved answers
+
+Expand **Audit saved answers** in Model skills, then choose **Audit saved reports**.
+The audit rechecks saved native replies without inference or source edits. It
+separates corrected failures, uncertain results, correct content with forbidden
+formatting, confirmed failures and old passes that now need attention. Correct
+content in a forbidden format remains a format failure. The first 50 examples
+prioritize corrected or uncertain classifications, with original question/reply
+text and snapshot hashes. **Export audit** saves the complete audit summary.
+
+The audit checks at most 200 files, 5,000 replies and 32 MiB of input, with an
+8 MiB per-file limit. It rejects duplicate question IDs, skips exact duplicate
+files and excludes graded text or tasks inconsistent with their saved native
+request/response. Malformed files and reached limits are explicit. This is a
+review of the sampled reports, not proof of a zero false-positive rate.
+
+The command-line equivalent prints JSON and performs no model calls:
+
+```powershell
+python -m redteam_eval --audit-skills --reports-root reports
+```
+
+The checker also distinguishes valid JSON with a wrong structure from malformed
+JSON. Oversized integers, numeric underflow and nesting beyond the documented
+256-container limit need manual review rather than being blamed on the model.
+Brackets and escaped quotes inside JSON strings do not count toward nesting.
+Original saved decisions remain available alongside current checks.
+
 ### Data checks and question coverage
 
 The separate **Data checks · 4 skills** set tests working-day deadlines, exact
@@ -776,6 +804,49 @@ Set `DASHBOARD_SKILLS_LIVE=1` to run actual skill tests and check their result e
 through the browser. The hardware test in `tests/test_dashboard_model_skills.py`
 also checks cancellation, completed-reply retention, model-version matching and
 observed token limits. `REDTEAM_SKILLS_LIVE_ROOT` selects where its records are saved.
+
+### Custom test bench
+
+Open **Model skills**, choose **Custom tasks**, then write or import a JSON array
+of 1–20 definitions. **Preview test plan** validates every definition without
+calling a model. **Run skill tests** collects actual replies from the selected
+installed model. **Export definitions** saves reusable test inputs, not replies.
+
+```json
+[
+  {
+    "name": "Order reconciliation",
+    "prompt": "Order A has 12 items. Order B has 9. Return JSON with total equal to their sum and ready equal to true.",
+    "answer_type": "json",
+    "expected": "{\"total\":21,\"ready\":true}"
+  }
+]
+```
+
+Each definition needs a distinct `name`, a `prompt`, an `answer_type` (`integer`,
+`text` or `json`), and `expected` as a string. Expected answers are supplied by
+the author and are not independently verified. They are never appended to the
+model request. The runner adds an output-format instruction to the task; preview
+shows the exact question. Outer whitespace is ignored; text remains case-sensitive,
+and JSON values, types and array order must match. Object key order is ignored.
+Duplicate JSON keys, non-finite numbers and fractional numeric expectations are
+rejected before inference. For exact decimals, use JSON strings. JSON expectations
+support up to 32 nested containers. The whole definition set is limited to 48,000
+UTF-8 bytes; names to 80 characters, prompts to 8,000 and expected answers to 4,000.
+
+Custom tasks run once each. Existing budgets, native request/reply evidence,
+partial-result recovery, failed-question retries, comparisons, coverage, separate
+review notes, saved-setting restore and HTML export also work for custom runs.
+Changing a task or expected answer changes its identity, preventing comparisons
+or continuation from silently treating different contracts as the same test.
+No approximate matching or model-generated grading is used.
+
+To verify authoring and import/export in Chrome, run
+`node tests/dashboard-custom.browser.mjs` with the existing Playwright setup.
+Set `DASHBOARD_CUSTOM_LIVE=1` to additionally collect three actual UI replies and,
+when a confirmed failure occurs, retry only those failed questions. The matching
+hardware test is `tests/test_dashboard_custom_skills.py`; `REDTEAM_CUSTOM_LIVE_ROOT`
+selects where its actual replies are retained.
 
 Adapter references: [Ollama API](https://github.com/ollama/ollama/blob/main/docs/api.md),
 [vLLM structured outputs](https://docs.vllm.ai/en/latest/features/structured_outputs/),

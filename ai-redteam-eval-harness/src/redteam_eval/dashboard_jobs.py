@@ -98,7 +98,8 @@ class ModelCheckRequest(Model):
     model: str = Field(min_length=1, max_length=200)
     seed: int = Field(default=1729, ge=0, le=2**31 - 1)
     cases_per_skill: int = Field(default=1, ge=1, le=10)
-    test_suite: Literal["basic", "extended", "data"] = "basic"
+    test_suite: Literal["basic", "extended", "data", "custom"] = "basic"
+    custom_cases: list[dict[str, Any]] | None = Field(default=None, min_length=1, max_length=20)
     difficulty: Literal["standard", "challenging"] = "standard"
     selected_skills: list[str] | None = Field(default=None, min_length=1, max_length=8)
     question_ids: list[str] | None = Field(default=None, min_length=1, max_length=80)
@@ -110,7 +111,11 @@ class ModelCheckRequest(Model):
     @model_validator(mode="after")
     def validate_skills(self) -> ModelCheckRequest:
         skill_names(self.test_suite, self.selected_skills)
-        if self.question_ids is not None:
+        if (
+            self.question_ids is not None
+            or self.test_suite == "custom"
+            or self.custom_cases is not None
+        ):
             self.questions()
         if self.retry_of is not None and self.question_ids is None:
             raise ValueError("A retry must select its original question IDs")
@@ -124,9 +129,12 @@ class ModelCheckRequest(Model):
             self.selected_skills,
             self.difficulty,
             self.question_ids,
+            self.custom_cases,
         )
 
     def question_count(self) -> int:
+        if self.test_suite == "custom":
+            return len(self.questions())
         return (
             len(self.question_ids)
             if self.question_ids is not None
@@ -567,6 +575,8 @@ class JobManager:
                 result["total_checks"] = (
                     len(job.request["question_ids"])
                     if job.request.get("question_ids")
+                    else len(job.request.get("custom_cases") or [])
+                    if job.request.get("test_suite") == "custom"
                     else len(
                         skill_names(
                             job.request.get("test_suite", "basic"),
@@ -851,7 +861,12 @@ class JobManager:
             ],
             "total_checks": request.question_count(),
             "planned_per_skill": planned_counts,
-            "interpretation": "These are sampled task checks, not a general model rating. Expected answers are computed by code. Only actual model replies are graded; no response schema forces the answer format.",
+            "interpretation": (
+                "Custom expected answers are supplied by the test author and are not independently verified. "
+                if request.test_suite == "custom"
+                else "Expected answers are computed by code. "
+            )
+            + "These are sampled task checks, not a general model rating. Only actual model replies are graded; expected answers are not added to the model request and no response schema forces the answer format.",
         }
 
         if previous and previous.get("retry_source"):

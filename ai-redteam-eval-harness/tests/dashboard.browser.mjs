@@ -167,6 +167,28 @@ try {
     await page.setViewportSize({width:1440,height:900});
     await page.locator('#skills-comparison > summary').click();
   }
+  const jobsBeforeAudit=(await(await page.request.get(`${base}/api/jobs`)).json()).jobs;
+  await page.locator('#skills-audit > summary').click();
+  await page.locator('#skills-audit-run').click();
+  await page.getByRole('heading',{name:'Saved-answer audit',exact:true}).waitFor();
+  const auditDownload=page.waitForEvent('download');
+  await page.locator('#skills-audit-export').click();
+  await(await auditDownload).saveAs(`${output}/exported-saved-answer-audit.json`);
+  const {readFile:readAudit}=await import('node:fs/promises');
+  const audit=JSON.parse(await readAudit(`${output}/exported-saved-answer-audit.json`,'utf8'));
+  assert.ok(audit.audited_replies>0);
+  assert.equal(audit.inference_requested,false); assert.equal(audit.source_modified,false);
+  assert.equal(Object.values(audit.counts).reduce((sum,n)=>sum+n,0),audit.audited_replies);
+  const jobsAfterAudit=(await(await page.request.get(`${base}/api/jobs`)).json()).jobs;
+  assert.deepEqual(jobsAfterAudit.map(job=>({id:job.id,request:job.request,result:job.result,status:job.status})),jobsBeforeAudit.map(job=>({id:job.id,request:job.request,result:job.result,status:job.status})));
+  await page.locator('#skills-audit-result').scrollIntoViewIfNeeded();
+  await page.screenshot({path:`${output}/saved-answer-audit-desktop.png`});
+  await page.setViewportSize({width:390,height:844});
+  await page.locator('#skills-audit-result').scrollIntoViewIfNeeded();
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth),390);
+  await page.screenshot({path:`${output}/saved-answer-audit-mobile.png`});
+  await page.setViewportSize({width:1440,height:900});
+  await page.locator('#skills-audit > summary').click();
   if(process.env.DASHBOARD_RETRY_NOTES_LIVE==='1') {
     const jobs=(await(await page.request.get(`${base}/api/jobs`)).json()).jobs;
     const source=jobs.find(job=>job.action==='check_model' && job.status==='complete' && job.result?.results?.some(row=>['wrong_answer','format_error','unexpected_tool'].includes(row.grade.status)));

@@ -1,16 +1,16 @@
 # Validation record
 
-Validated locally on 19 November 2026 with Python 3.12.14. Changes remain local; no commits
+Validated locally on 21 November 2026 with Python 3.12.14. Changes remain local; no commits
 or pushes were made during this feature extension.
 
 ## Current verification
 
 | Check | Evidence |
 |---|---|
-| Unit and integration tests | 437 offline tests passed with twelve hardware tests deselected. A dedicated four-task Qwen data workflow and a real dashboard Data checks/coverage-export run passed separately; prior retry and expanded-run checks remain recorded. The prior complete hardware-enabled suite passed 331 tests before focused runs were added |
+| Unit and integration tests | 491 offline tests passed on 21 November with thirteen opt-in hardware tests deselected; actual custom integer, text and nested JSON workflows passed separately |
 | Live replay workflow | Real evaluation, cancellation/resume, grounded analysis and fresh recorded replay passed on 17 November; advanced hardware probe and arithmetic smoke were also verified on 16 November |
 | Dashboard browser and frontend checks | Real Chrome workflow checks passed at 1440×900 and 390×844; nine Node tests passed |
-| Strict typing | mypy passes across 37 source modules |
+| Strict typing | mypy passes across 39 source modules |
 | Lint and formatting | Ruff checks all source and test files |
 | Readiness and real inference probe | Ollama 0.40.13, Qwen 2.5 7B, actual answer `108` to `93 + 15` |
 | Archive-only regeneration | Rebuilt the six-pair live audit with `inference_requested: false` |
@@ -357,3 +357,51 @@ Fifteen new data/coverage offline cases independently verify answers across five
 All 437 offline tests passed with twelve opt-in hardware tests deselected. Nine frontend tests, formatting, Ruff and mypy across 37 source modules passed. The dedicated real Qwen data run collected four actual replies, checked native response identity/usage, exact regrading, four-skill review coverage and valid saved checkpoints. The model produced actual calculation and output-format failures, which remain recorded; workflow completion does not imply passing answers. A separate real Chrome run previewed and submitted the four challenging data questions, verified all four native saved replies and per-skill coverage, exported the exact coverage JSON and checked the 40-question UI estimate. Desktop and 390px mobile coverage layouts were inspected with no page overflow. A final read-only Chrome regression check passed after the strict matching change.
 
 Question coverage counts only identical planned questions. Missing replies are unanswered; incomplete/review-needed outcomes remain unconfirmed. Duplicate IDs are rejected, and changed/unplanned questions are excluded rather than scored as failures. Coverage export contains actual source/settings metadata and no generated responses. Evidence: `reports/data-skills-20261119/`, the actual dashboard job history, `reports/dashboard-verification/exported-question-coverage.json` and `data-coverage-*.png`. No model replies or source reports were replaced, and nothing was pushed to GitHub.
+
+## Saved-answer audit and checker-limit fixes, 21 November
+
+A new saved-answer audit is available in Model skills, as a protected empty-body POST to /api/skill-audit, and through --audit-skills --reports-root reports (JSON on stdout). It rechecks original saved native replies without inference or source edits, exposes snapshot hashes, skips exact duplicate files, rejects ambiguous duplicate question IDs and excludes inconsistent task/reply evidence. Wrapper-modified text is excluded rather than attributed to the native model. Corrected, uncertain, format-only, confirmed failure and saved-pass changes remain distinct. The first 50 examples prioritize corrected or uncertain cases. Scan limits (200 files, 5,000 replies, 8 MiB per file, 32 MiB total, 2,000 directories) and input issues are explicit. This is not an extrapolated false-positive-rate estimate.
+
+Confirmed checker fixes: valid JSON with the wrong array element type no longer becomes a format error because numeric-only diagnostics tried to hash nested objects. Huge integers and numeric underflow now require review. A quote/escape-aware 256-container nesting guard bounds both answer checking and outer audit metadata; interpreter recursion limits no longer determine classification. Genuine syntax errors, duplicate keys and nonstandard JSON values remain format errors. No original grade or reply is silently rewritten.
+
+Twenty new offline cases cover valid wrong-shaped JSON, unsupported numbers, nesting limits, quoted brackets/escaped quotes, genuine format errors, actual native fixture auditing, exact-file deduplication, prioritization, duplicate IDs, scan limits, malformed files, missing/inconsistent native evidence, wrapper changes, CLI behavior, session-token protection and pre-decode metadata bounds. All 457 offline tests passed with twelve optional hardware tests deselected. Ruff, formatting and mypy across 38 modules passed. Nine frontend tests and real Chrome desktop/mobile workflows passed, including audit export and unchanged source job data. The dedicated four-question local Qwen workflow passed and retained native request/response evidence; no mock completions were introduced.
+
+The final saved-data audit covered 177 native replies in 33 reports, without truncation, input issues or unverified replies. It found zero failed-to-passed corrections and zero changed classifications in that sample, two correct-content replies with genuine format violations, 65 other confirmed task/format failures and 110 still-passing replies. All 33 source-file hashes matched after audit. This sample does not prove that all future false positives are eliminated; the newly reproduced boundary errors are covered by regression tests.
+
+Evidence: reports/checker-audit-20261121/saved-answer-audit.json, reports/checker-audit-20261121/live/, reports/dashboard-verification/exported-saved-answer-audit.json and saved-answer-audit-*.png. Desktop and 390px mobile audit screens were inspected without page overflow. The original dashboard was initially unavailable; the updated service was tested on temporary loopback port 8766, then started on 8765. Temporary verification service was stopped. Nothing was committed or pushed to GitHub.
+
+## Custom test bench, 21 November
+
+Added custom integer, exact-text and JSON contracts, JSON definition import/export,
+validation before inference, authored-answer labels, stable contract identity and
+integration with saved settings, measured coverage, continuation checks and exact
+failed-question retries. Expected values are never included in native model requests.
+
+Added 34 offline checks covering malformed and oversized definitions, unknown fields,
+duplicate names/JSON keys, fractional expectations, non-finite/range limits, Unicode,
+32-container depth boundaries, strict booleans versus integers, decimal strings,
+case and whitespace, fenced correct content, changing contract identity, subset
+selection, 20-question progress counts and read-only plan endpoints. Corrected a
+misleading increasing-order diagnostic for custom lists and a custom progress-count
+bug found during the first actual inference test.
+
+Actual Qwen 2.5 7B verification retained 13 new native replies across API and browser
+runs, including a failed-question retry. The API hardware workflow checks the native
+request body, original reply text, saved checkpoint identity, coverage and portable
+HTML. Chrome checks import/export round trips, invalid-answer rejection, exact plan,
+actual run, restore, source preservation and a fresh failed-question retry. Screenshots
+were inspected at 1440×900 and 390×844; the editor fills the available mobile width.
+The existing full browser workflow and nine frontend tests also passed.
+
+The browser arithmetic task asked for 9×8−5. Qwen returned `71` instead of `67`;
+that retained failure is a confirmed answer error. The raw reply was not replaced or
+softened. The final saved-answer audit covered 190 native replies in 38 reports,
+found zero classification changes, zero unverified replies and no input issues,
+and retained two correct-content format violations as format violations. Every
+source report SHA-256 hash stayed unchanged. These observations cover the sampled
+replies; they do not establish that all future false positives are impossible.
+
+Local proof: `reports/custom-bench-20261121` and `reports/dashboard-verification`.
+Custom expectations remain author supplied; the harness validates their supported
+representation, not the truth of an arbitrary authored answer. No commits or pushes
+were made.

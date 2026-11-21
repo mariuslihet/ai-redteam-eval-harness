@@ -22,6 +22,7 @@ from redteam_eval.models import BackendConfig, Model, Thresholds
 from redteam_eval.regression import RegressionLimits, compare_runs
 from redteam_eval.reporting import gate, summarize
 from redteam_eval.review_notes import NoteRequest
+from redteam_eval.skill_audit import audit_saved_skills
 from redteam_eval.skill_tools import build_skill_plan
 
 
@@ -189,6 +190,12 @@ class DashboardApp:
                     raise ValueError("JSON request must be an object")
                 if route == "/api/jobs":
                     return json_reply(self.jobs.submit(payload).model_dump(mode="json"), 202)
+                if route == "/api/skill-audit":
+                    if payload:
+                        raise ValueError(
+                            "Saved-answer audit uses the configured reports root and an empty JSON object"
+                        )
+                    return json_reply(audit_saved_skills(self.store.root))
                 if route == "/api/skill-plan":
                     plan_request = ModelCheckRequest.model_validate(payload)
                     return json_reply(build_skill_plan(plan_request.model_dump(mode="json")))

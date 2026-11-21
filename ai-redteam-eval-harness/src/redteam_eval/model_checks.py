@@ -32,10 +32,12 @@ SKILL_SYSTEM_MESSAGE = "Follow the user's requested task and output format. Impo
 def skill_names(
     test_suite: str = "basic", selected_skills: list[str] | None = None
 ) -> tuple[str, ...]:
-    if test_suite not in {"basic", "extended", "data"}:
-        raise ValueError("Choose basic, extended or data checks")
+    if test_suite not in {"basic", "extended", "data", "custom"}:
+        raise ValueError("Choose basic, extended, data or custom checks")
     available = (
-        DATA_SKILLS
+        ("Custom tasks",)
+        if test_suite == "custom"
+        else DATA_SKILLS
         if test_suite == "data"
         else SKILLS + EXTENDED_SKILLS
         if test_suite == "extended"
@@ -53,7 +55,11 @@ def skill_names(
     return tuple(name for name in available if name in selected_skills)
 
 
-class UnsupportedNumber(ValueError):
+class CheckerLimit(ValueError):
+    """Input exceeds a documented checker resource or numeric limit."""
+
+
+class UnsupportedNumber(CheckerLimit):
     """Numeric spelling beyond this checker's supported finite range."""
 
 
@@ -73,11 +79,21 @@ def skill_questions(
     selected_skills: list[str] | None = None,
     difficulty: str = "standard",
     question_ids: list[str] | None = None,
+    custom_cases: list[dict[str, Any]] | None = None,
 ) -> list[SkillQuestion]:
     if not 1 <= count <= 10:
         raise ValueError("Choose one to ten questions for each skill")
     if difficulty not in {"standard", "challenging"}:
         raise ValueError("Choose standard or challenging questions")
+    if test_suite == "custom":
+        from redteam_eval.custom_skills import custom_questions
+
+        skill_names(test_suite, selected_skills)
+        if count != 1 or difficulty != "standard":
+            raise ValueError("Custom tasks run once each at their authored difficulty")
+        return select_skill_questions(custom_questions(custom_cases), question_ids)
+    if custom_cases is not None:
+        raise ValueError("Custom definitions require the custom test set")
     if test_suite == "data":
         from redteam_eval.data_skills import data_questions
 
@@ -243,10 +259,37 @@ def finite_number(value: str) -> int | float:
             "Number is outside the checker's supported range; manual review is needed"
         )
     exact = Decimal(value)
+    if exact != 0 and finite == 0:
+        raise UnsupportedNumber("Number is too small for the checker; manual review is needed")
     return int(exact) if exact == exact.to_integral_value() else finite
 
 
+def check_json_depth(text: str) -> None:
+    depth = 0
+    quoted = escaped = False
+    for char in text:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == chr(92):
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char in "[{":
+            depth += 1
+            if depth > 256:
+                raise CheckerLimit(
+                    "JSON nesting exceeds the checker limit (256); manual review is needed"
+                )
+        elif char in "]}":
+            depth = max(0, depth - 1)
+
+
 def strict_json(text: str) -> Any:
+    check_json_depth(text)
+
     def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result = {}
         for key, value in pairs:
@@ -258,9 +301,21 @@ def strict_json(text: str) -> Any:
     def invalid(value: str) -> None:
         raise ValueError(f"Nonstandard JSON value: {value}")
 
+    def integer(value: str) -> int:
+        try:
+            return int(value)
+        except ValueError as exc:
+            raise UnsupportedNumber(
+                "Integer exceeds the checker limit; manual review is needed"
+            ) from exc
+
     # Original decimal spelling avoids false passes caused by binary-float rounding.
     return json.loads(
-        text, object_pairs_hook=unique, parse_constant=invalid, parse_float=finite_number
+        text,
+        object_pairs_hook=unique,
+        parse_constant=invalid,
+        parse_float=finite_number,
+        parse_int=integer,
     )
 
 
@@ -306,11 +361,12 @@ def grade_skill(question: SkillQuestion, response: Response) -> dict[str, Any]:
         answer_correct = exact_value(answer, question.expected)
         diagnostic_answer = answer
         if not answer_correct:
-            problems.append("The reply did not match the computed answer and required format")
+            problems.append("The reply did not match the expected answer and required format")
             if (
                 isinstance(answer, list)
                 and isinstance(question.expected, list)
                 and all(type(n) is int for n in answer)
+                and all(type(n) is int for n in question.expected)
             ):
                 missing = sorted(set(question.expected) - set(answer))
                 added = sorted(set(answer) - set(question.expected))
@@ -345,12 +401,20 @@ def grade_skill(question: SkillQuestion, response: Response) -> dict[str, Any]:
                     and len(answer) == len(question.expected)
                 ):
                     problems.append("The IDs are not in the required score, label and ID order")
-                elif not record_ids and answer != sorted(answer):
+                elif (
+                    not record_ids
+                    and question.expected == sorted(question.expected)
+                    and answer != sorted(answer)
+                ):
                     problems.append("The numbers are not in increasing order")
     except (ValueError, TypeError, RecursionError) as exc:
-        checker_limited = isinstance(exc, UnsupportedNumber)
+        checker_limited = isinstance(exc, (CheckerLimit, RecursionError))
         format_correct = None if checker_limited else False
-        problems.append(str(exc))
+        problems.append(
+            "The answer exceeded the checker nesting limit; manual review is needed"
+            if isinstance(exc, RecursionError)
+            else str(exc)
+        )
         fenced = re.fullmatch(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL | re.IGNORECASE)
         if fenced:
             candidate = fenced.group(1).strip()
@@ -470,7 +534,9 @@ def review_skill_results(record: dict[str, Any]) -> dict[str, Any]:
         "results": results,
         "summary": skill_summary(
             results,
-            "data"
+            "custom"
+            if record.get("test_set") == "custom-skills-v1"
+            else "data"
             if record.get("test_set") == "data-skills-v1"
             else "extended"
             if record.get("test_set") == "extended-skills-v1"
