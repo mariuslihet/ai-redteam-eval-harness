@@ -807,8 +807,8 @@ observed token limits. `REDTEAM_SKILLS_LIVE_ROOT` selects where its records are 
 
 ### Custom test bench
 
-Open **Model skills**, choose **Custom tasks**, then write or import a JSON array
-of 1–20 definitions. **Preview test plan** validates every definition without
+Open **Model skills**, choose **Custom tasks**, and use the visual editor to add
+1–20 definitions. You can also switch to the JSON editor or import definitions. **Preview test plan** validates every definition without
 calling a model. **Run skill tests** collects actual replies from the selected
 installed model. **Export definitions** saves reusable test inputs, not replies.
 
@@ -847,6 +847,73 @@ Set `DASHBOARD_CUSTOM_LIVE=1` to additionally collect three actual UI replies an
 when a confirmed failure occurs, retry only those failed questions. The matching
 hardware test is `tests/test_dashboard_custom_skills.py`; `REDTEAM_CUSTOM_LIVE_ROOT`
 selects where its actual replies are retained.
+
+### Repeat tests and check consistency
+
+In **Model skills**, select a stopped saved test and use **Run same tests again**
+to collect fresh replies for its exact question plan. The new job keeps the seed,
+selected questions, difficulty, reply limit and budgets. Its allowances start fresh.
+For a saved failed-question retry, only that selected subset is repeated. Original
+replies and source files are preserved; changed or corrupt source contracts are
+rejected before inference. The installed model is discovered and pinned for the new
+run; if its version changed, the consistency report keeps versions separate.
+
+Open **Check results across repeated runs** and choose 2–10 saved tests. The report
+makes no model calls. It groups exact tasks within the same model name and version,
+shows mixed pass/fail outcomes first, and retains unfinished answers as unconfirmed.
+Changed prompts, rules, expected answers or model versions form separate groups.
+Copied native evidence counts once and is listed as excluded. Missing or inconsistent
+native evidence is excluded with a reason. A single remaining reply cannot establish
+repeatability. Open each task to inspect expected values, current checker details and
+original actual text; **Export repeat report** retains the full native envelopes and
+source snapshot hashes. Limits: 1,000 selected replies and 16 MiB of report input.
+
+Recorded seeds are shown when available; missing seed metadata stays unknown.
+Repeated deterministic calls with the same seed are not independent trials, and this
+sample report does not estimate general reliability or prove an arbitrary authored
+expected answer correct.
+
+`tests/test_dashboard_skill_consistency.py` covers evidence boundaries and the
+actual challenging event-record repeat workflow. Set `REDTEAM_REPEAT_LIVE_ROOT`
+to retain its native replies. With the existing Playwright setup,
+`node tests/dashboard-repeat.browser.mjs` checks selection, validation, export and
+mobile layout; `DASHBOARD_REPEAT_LIVE=1` adds an actual fresh UI repeat.
+
+### Visual editor and suite library
+
+The custom visual editor provides separate name, prompt, answer-format and expected-
+answer fields. Add tests, duplicate them with distinct names, move them up/down, remove
+them, or undo the last list operation. Switch between visual and JSON editors without
+changing the definitions. Expected answers remain supplied by you; editing never
+creates model replies. Normal checker validation still applies before inference.
+
+Use **Save setup as suite** to capture the current model, question selection, seed,
+difficulty, budgets and custom definitions. Give it a name, description and optional
+tags, then save. **Suite library** in the navigation opens reusable saved setups:
+
+- Search names, descriptions and tags; filter favorites and archived suites.
+- Edit metadata, mark favorites, or capture the current test form with **Use current
+  test setup** before saving an updated definition.
+- Duplicate suites independently; archive and restore suites without deleting them.
+- Export a portable definition and import it as a new draft. Saving validates the
+  complete setup; imported drafts cannot be loaded before validation succeeds.
+- **Load into test form** restores a saved setup. Starting the model remains an
+  explicit run action. Missing installed models require a new model selection.
+- Concurrent browser edits use revision checks. A stale save preserves the draft;
+  **Reload saved version** explicitly replaces it with the latest stored revision.
+
+Definitions persist in `reports/.test-suites.json` (or the selected reports root),
+separately from measured jobs and replies. Saving, organizing, importing, exporting
+and loading suites make no model calls. The library supports up to 100 suites,
+including archived suites; titles are limited to 80 characters, descriptions to
+1,000, and tags to eight distinct values of up to 24 characters. Corrupt libraries
+are reported and preserved. Export files contain definitions, not generated replies.
+
+`node tests/dashboard-workbench.browser.mjs` verifies the complete authoring/library
+workflow against an isolated dashboard on port 8766. Set `DASHBOARD_URL` to choose a
+different dashboard and `DASHBOARD_WORKBENCH_LIVE=1` to run the loaded two-question
+suite using an actual installed model. Browser checks create saved suite definitions;
+use a separate reports root for verification.
 
 Adapter references: [Ollama API](https://github.com/ollama/ollama/blob/main/docs/api.md),
 [vLLM structured outputs](https://docs.vllm.ai/en/latest/features/structured_outputs/),

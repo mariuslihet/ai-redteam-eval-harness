@@ -23,6 +23,7 @@ try {
   await page.locator('#skills-suite').selectOption('custom');
   assert.equal(await page.locator('#skills-focus').inputValue(),'');
   assert.ok(await page.locator('#skills-difficulty').isDisabled());
+  await page.locator('#custom-json-mode').click();
   await page.locator('#skills-custom-json').fill('[{"name":"Bad","prompt":"Return JSON","answer_type":"json","expected":"{\\"x\\":1,\\"x\\":2}"}]');
   await page.locator('#skills-preview').click();
   await page.getByText(/Repeated JSON keys/).waitFor();

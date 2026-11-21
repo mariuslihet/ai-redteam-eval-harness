@@ -48,6 +48,7 @@ from redteam_eval.reporting import write_reports
 from redteam_eval.review_notes import NoteRequest, read_notes, save_note
 from redteam_eval.runner import Runner
 from redteam_eval.skill_comparison import compare_skill_results
+from redteam_eval.skill_consistency import SkillConsistencyRequest, skill_consistency
 from redteam_eval.skill_coverage import skill_coverage
 from redteam_eval.skill_tools import skill_html_report, skill_performance
 from redteam_eval.synthesis import synthesize
@@ -649,6 +650,52 @@ class JobManager:
                 selected_skills=list(dict.fromkeys(row["question"]["skill"] for row in failed)),
             )
             return self.submit(settings)
+
+    def repeat_checks(self, identifier: str) -> DashboardJob:
+        with self.lock:
+            source = self.jobs[identifier]
+            if (
+                source.action != "check_model"
+                or source.status not in ("complete", "failed", "cancelled")
+                or not (source.result or {}).get("results")
+            ):
+                raise ValueError("Choose a stopped skill test with saved replies to repeat")
+            settings = ModelCheckRequest.model_validate(source.request).model_dump(mode="json")
+            planned = {
+                q.id: q.model_dump(mode="json")
+                for q in ModelCheckRequest.model_validate(settings).questions()
+            }
+            record = source.result or {}
+            if (
+                ModelCheckRequest.model_validate(record.get("settings", {})).model_dump(mode="json")
+                != settings
+            ):
+                raise ValueError("Saved settings differ from the source plan")
+            rows = review_skill_results(record)["results"]
+            identifiers = [row["question"]["id"] for row in rows]
+            if len(set(identifiers)) != len(identifiers) or any(
+                not exact_value(row["question"], planned.get(row["question"]["id"])) for row in rows
+            ):
+                raise ValueError(
+                    "Saved questions differ from the source plan; restore or start a new plan"
+                )
+            settings["retry_of"] = None
+            return self.submit(settings)
+
+    def consistency_checks(self, identifiers: list[str]) -> dict[str, Any]:
+        SkillConsistencyRequest(job_ids=identifiers)
+        with self.lock:
+            records = []
+            for identifier in identifiers:
+                job = self.jobs[identifier]
+                if (
+                    job.action != "check_model"
+                    or job.status not in ("complete", "failed", "cancelled")
+                    or not (job.result or {}).get("results")
+                ):
+                    raise ValueError("Choose stopped skill tests with saved replies")
+                records.append({"job_id": identifier, "record": copy.deepcopy(job.result)})
+        return skill_consistency(records)
 
     def performance(self, identifier: str) -> dict[str, Any]:
         with self.lock:

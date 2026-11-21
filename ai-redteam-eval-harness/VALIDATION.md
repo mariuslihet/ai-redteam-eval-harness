@@ -7,10 +7,10 @@ or pushes were made during this feature extension.
 
 | Check | Evidence |
 |---|---|
-| Unit and integration tests | 491 offline tests passed on 21 November with thirteen opt-in hardware tests deselected; actual custom integer, text and nested JSON workflows passed separately |
+| Unit and integration tests | 541 offline tests passed on 21 November with fourteen opt-in hardware tests deselected; a saved suite was loaded and executed through the UI with two actual Qwen replies |
 | Live replay workflow | Real evaluation, cancellation/resume, grounded analysis and fresh recorded replay passed on 17 November; advanced hardware probe and arithmetic smoke were also verified on 16 November |
 | Dashboard browser and frontend checks | Real Chrome workflow checks passed at 1440×900 and 390×844; nine Node tests passed |
-| Strict typing | mypy passes across 39 source modules |
+| Strict typing | mypy passes across 41 source modules |
 | Lint and formatting | Ruff checks all source and test files |
 | Readiness and real inference probe | Ollama 0.40.13, Qwen 2.5 7B, actual answer `108` to `93 + 15` |
 | Archive-only regeneration | Rebuilt the six-pair live audit with `inference_requested: false` |
@@ -405,3 +405,73 @@ Local proof: `reports/custom-bench-20261121` and `reports/dashboard-verification
 Custom expectations remain author supplied; the harness validates their supported
 representation, not the truth of an arbitrary authored answer. No commits or pushes
 were made.
+
+## Repeated tests and consistency reports, 21 November
+
+Added exact-plan reruns with fresh allowances and a read-only consistency report
+for 2–10 stopped saved skill tests. Reports preserve native evidence, source snapshot
+hashes, original text and current checker details. They group exact question contracts
+within the same model version; copied evidence is counted once and excluded with a
+reason. Changed expected values/prompts/rules, missing or inconsistent model evidence,
+unknown seed metadata and single observations cannot create a false stability claim.
+Source settings/question corruption is rejected before a repeat starts.
+
+Added 38 offline boundary and integration checks: confirmed versus unconfirmed outcome
+combinations, duplicate selections and native evidence, exact contract/version boundaries,
+modified reply wrappers, absent/mismatched model metadata, duplicate question IDs,
+work limits, source preservation, session protection, active-run rejection, unchanged
+plan/budgets, invalid seed metadata and corrupt source plans. All 529 offline tests,
+nine frontend tests, Ruff checks/formatting and typing across 40 source modules passed.
+
+Actual Qwen verification collected two fresh replies to the same challenging corrected-
+event task, plus two fresh UI repeats. Both event-task replies contained Markdown and
+unevaluated arithmetic expressions rather than the requested JSON. Manual reconciliation
+confirms expected totals A=91, B=149 and four active events; those retained format failures
+are justified. Same-seed results are explicitly not described as independent trials.
+Chrome desktop/mobile checks verified exact source preservation, export equality, invalid
+selection errors, stale-result clearing and the original dashboard/custom-editor workflows.
+Screenshots were inspected at 1440×900 and 390×844 with no page overflow.
+
+A final read-only audit covered 194 native replies in 42 reports: no classification changes,
+unverified replies or input issues. Two earlier correct-content format violations remained
+format violations. All 42 source report hashes stayed unchanged. This is sampled evidence,
+not a guarantee against every future false positive. Local evidence is retained under
+`reports/repeat-checks-20261121` and `reports/dashboard-verification`.
+No commits or GitHub pushes were made.
+
+## Visual authoring and reusable suite library, 21 November
+
+This extension adds app workflow features: a visual custom-test editor, independent
+field editing, duplicate/reorder/remove/undo actions, visual/JSON switching, complete
+setup saving, a persistent suite library, descriptions/tags/search/favorites,
+archive/restore, independent duplication, portable import/export, saved setup loading,
+updating a suite from the current form, and revision conflict recovery. Saving and
+organizing definitions are separate from actual inference and measured replies.
+
+The isolated Chrome workflow created a two-task custom suite visually, reordered and
+removed/restored definitions, previewed it, saved all settings, filtered by tags and
+favorites, exported/duplicated/archived/restored/imported definitions, rejected a stale
+save without losing the local draft, explicitly reloaded the latest saved revision,
+and loaded the suite back into the model form. Page reload retained saved definitions.
+Twelve backend tests cover disk round trips, independent copies, archived state,
+revisions/conflicts, metadata/settings validation, corrupt-file preservation, session
+protection and static asset serving. Total: 541 offline checks, nine frontend checks,
+Ruff checks/formatting across 77 Python files, and typing across 41 source modules.
+The existing dashboard, custom-editor and repeat-report browser workflows also passed.
+
+Actual inference from the loaded suite returned `CURRENT-27` correctly for the latest
+record. The revised/voided shipment-ledger reply returned remaining=24 and active=3;
+manual reconciliation gives 20+8−3=25 and two active unique events. That original wrong
+reply was retained and correctly failed. No model completion was substituted. Suite
+creation, editing and loading created no jobs until the explicit run action.
+
+Desktop/mobile renders were inspected at 1440×900 and 390×844. Library panes stack on
+mobile, selected suites are marked, and form controls fit the viewport. A read-only
+saved-answer audit covered 196 native replies across 43 reports with zero changed
+classifications, unverified replies or input issues. Every source report hash stayed
+unchanged. This sampled audit is not a universal false-positive guarantee.
+
+Proof is retained under `reports/suite-workbench-20261121` and
+`reports/dashboard-verification`, including the portable exported suite and screenshots.
+The temporary verification dashboard used a separate reports root; the main library
+was not populated with test fixtures. No commits or pushes were made.

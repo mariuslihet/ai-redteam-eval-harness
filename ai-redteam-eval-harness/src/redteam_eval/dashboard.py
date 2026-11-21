@@ -23,7 +23,9 @@ from redteam_eval.regression import RegressionLimits, compare_runs
 from redteam_eval.reporting import gate, summarize
 from redteam_eval.review_notes import NoteRequest
 from redteam_eval.skill_audit import audit_saved_skills
+from redteam_eval.skill_consistency import SkillConsistencyRequest
 from redteam_eval.skill_tools import build_skill_plan
+from redteam_eval.suite_library import SuiteLibrary, SuiteSaveRequest
 
 
 class HTTPReply(Model):
@@ -57,6 +59,7 @@ class DashboardApp:
     def __init__(self, root: Path, backend: BackendConfig, port: int = 8765):
         self.store = ReportStore(root)
         self.jobs = JobManager(self.store, backend)
+        self.suites = SuiteLibrary(self.store.root)
         self.port, self.csrf = port, secrets.token_urlsafe(32)
 
     def handle(
@@ -111,7 +114,12 @@ class DashboardApp:
                 )
             if method == "GET" and route.startswith("/assets/"):
                 name = route.removeprefix("/assets/")
-                if name not in {"dashboard.css", "dashboard.mjs", "dashboard-core.mjs"}:
+                if name not in {
+                    "dashboard.css",
+                    "dashboard.mjs",
+                    "dashboard-core.mjs",
+                    "suite-workbench.mjs",
+                }:
                     return json_reply({"error": "Asset not found"}, 404)
                 content_type = (
                     "text/css; charset=utf-8"
@@ -168,6 +176,8 @@ class DashboardApp:
                     content_type="application/octet-stream",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'},
                 )
+            if method == "GET" and route == "/api/test-suites":
+                return json_reply(self.suites.read())
             if method == "GET" and len(parts) == 3 and parts[:2] == ["api", "jobs"]:
                 return json_reply(self.jobs.snapshot(parts[2]))
             if method == "GET" and len(parts) == 4 and parts[:2] == ["api", "jobs"]:
@@ -188,6 +198,8 @@ class DashboardApp:
                 payload = json.loads(body)
                 if not isinstance(payload, dict):
                     raise ValueError("JSON request must be an object")
+                if route == "/api/test-suites":
+                    return json_reply(self.suites.save(SuiteSaveRequest.model_validate(payload)))
                 if route == "/api/jobs":
                     return json_reply(self.jobs.submit(payload).model_dump(mode="json"), 202)
                 if route == "/api/skill-audit":
@@ -199,6 +211,9 @@ class DashboardApp:
                 if route == "/api/skill-plan":
                     plan_request = ModelCheckRequest.model_validate(payload)
                     return json_reply(build_skill_plan(plan_request.model_dump(mode="json")))
+                if route == "/api/skill-consistency":
+                    selection = SkillConsistencyRequest.model_validate(payload)
+                    return json_reply(self.jobs.consistency_checks(selection.job_ids))
                 if route == "/api/skill-comparison":
                     comparison_request = SkillComparisonRequest.model_validate(payload)
                     return json_reply(
@@ -274,7 +289,11 @@ class DashboardApp:
                         )
                     if payload:
                         raise ValueError(
-                            "Cancel, resume and saved-check review requests must use an empty JSON object"
+                            "Repeat, cancel, resume and saved-check review requests must use an empty JSON object"
+                        )
+                    if parts[3] == "repeat":
+                        return json_reply(
+                            self.jobs.repeat_checks(parts[2]).model_dump(mode="json"), 202
                         )
                     if parts[3] == "cancel":
                         return json_reply(self.jobs.cancel(parts[2]).model_dump(mode="json"))
