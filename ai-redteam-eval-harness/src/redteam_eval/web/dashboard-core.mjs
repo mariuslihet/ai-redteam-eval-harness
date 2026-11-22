@@ -69,7 +69,7 @@ export function filterSkillResults(results, {query = "", skill = "", status = ""
   });
 }
 
-export function filterSkillJobs(jobs,query="") {
+export function filterSkillJobs(jobs,query="",details={}) {
  const needle=query.trim().toLocaleLowerCase();
- return jobs.filter(job=>job.action==="check_model" && (!needle || [job.id,job.status,job.request.model,job.request.seed,job.request.test_suite || "basic",job.request.difficulty || "standard",...(job.request.selected_skills || ["all skills"])].join(" ").toLocaleLowerCase().includes(needle)));
+ return jobs.filter(job=>job.action==="check_model" && (!needle || [job.id,job.status,job.request.model,job.request.seed,job.request.test_suite || "basic",job.request.difficulty || "standard",...(job.request.selected_skills || ["all skills"]),details[job.id]?.title || "",details[job.id]?.note || "",...(details[job.id]?.tags || [])].join(" ").toLocaleLowerCase().includes(needle)));
 }

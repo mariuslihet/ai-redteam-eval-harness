@@ -1,3 +1,7 @@
+import {installProjectWorkspace} from "./project-workspace.mjs";
+import {installModelWorkspace} from "./model-workspace.mjs";
+import {installResultsOrganizer} from "./results-organizer.mjs";
+import {installQueueWorkbench} from "./queue-workbench.mjs";
 import {installSuiteWorkbench} from "./suite-workbench.mjs";
 import {protectionStep, modeName, outcomeName, capabilityName, problemName, familyNames, percent, number, interval, nativeText, nativeTools, reviewReasons, pairReasons, traceState, filterPairs, filterRuns, filterSkillResults, filterSkillJobs, tokenTotal, duration} from "./dashboard-core.mjs";
 
@@ -268,8 +272,8 @@ async function refreshJobs() {
     const ordered = [...state.jobs].sort((a,b) => Number(["running","queued"].includes(b.status)) - Number(["running","queued"].includes(a.status)));
     const cards = ordered.map(job => {
       const card = node("article", `job-card ${job.status === "failed" ? "failed" : ""}`), info = node("div", "job-info");
-      info.append(node("h3", "", `${job.action === "analyze" ? "Local model explanation" : job.action === "check_model" ? "Model skill tests" : job.action === "replay" ? "Recorded attack replay" : job.request.seeds?.length ? "Repeated test run" : "Local test run"} · ${job.request.model}`));
-      const label = job.action === "check_model" ? `${job.completed_checks}/${job.total_checks} questions answered` : job.action !== "analyze" ? `${job.completed_pairs}/${job.total_pairs ?? "…"} saved cases` : "Explanation with checked quotes";
+      info.append(node("h3", "", `${job.action === "prompt" ? "Prompt reply" : job.action === "analyze" ? "Local model explanation" : job.action === "check_model" ? "Model skill tests" : job.action === "replay" ? "Recorded attack replay" : job.request.seeds?.length ? "Repeated test run" : "Local test run"} · ${job.request.model}`));
+      const label = job.action === "prompt" ? (job.result?.response ? "Actual reply saved (ungraded)" : "Waiting for model reply") : job.action === "check_model" ? `${job.completed_checks}/${job.total_checks} questions answered` : job.action !== "analyze" ? `${job.completed_pairs}/${job.total_pairs ?? "…"} saved cases` : "Explanation with checked quotes";
       info.append(node("p", "", `${job.status.toUpperCase()} · ${label}${job.execution ? ` · ${number(job.execution.total_tokens)} tokens used, including saved work` : ""}`));
       if (job.status === "running" || job.status === "queued") { const progress = node("progress"); if(job.action === "check_model") { progress.max=job.total_checks; progress.value=job.completed_checks; } else if (job.total_pairs) { progress.max = job.total_pairs; progress.value = job.completed_pairs; } progress.setAttribute("aria-label", `${job.status}: ${label}`); info.append(progress); }
       if (job.error) info.append(node("p", "job-error", job.error));
@@ -277,6 +281,7 @@ async function refreshJobs() {
       if (["running", "queued"].includes(job.status)) { const cancel = node("button", "secondary small", "Cancel job"); cancel.onclick = async () => { try { await api(`/api/jobs/${job.id}/cancel`, {}); announce("Cancellation requested"); await refreshJobs(); } catch (error) { showError(error); } }; actions.append(cancel); }
       if ((["evaluate","replay"].includes(job.action) || job.can_continue) && ["failed", "cancelled"].includes(job.status)) { const resume = node("button", "secondary small", "Resume same settings"); resume.onclick = async () => { try { await api(`/api/jobs/${job.id}/resume`, {}); await refreshJobs(); } catch (error) { showError(error); } }; actions.append(resume); }
       if (job.result_id && job.status === "complete") { const open = node("button", "primary small", "Open measured result"); open.onclick = () => { state.view = job.result_id.startsWith("campaign_") ? "campaigns" : "runs"; location.hash = `${state.view === "campaigns" ? "campaign" : "run"}/${job.result_id}`; }; actions.append(open); }
+      if(job.action === "prompt") {const open=node("button","secondary small","Open prompt reply");open.onclick=()=>state.openModelWorkspace?.(job.id);actions.append(open);}
       if(job.action === "check_model") { const open=node("button","secondary small","Open skill results"); open.onclick=()=>openSkills(job.id); actions.append(open); } actions.querySelectorAll("button").forEach(button => { button.dataset.jobAction = `${job.id}:${button.textContent}`; }); card.append(info, actions); return card;
     });
     $("jobs").replaceChildren(...cards.slice(0,1));
@@ -350,12 +355,15 @@ $("library-previous").onclick=()=>{ state.libraryPage--; renderLibrary(); }; $("
 window.addEventListener("hashchange", () => refresh());
 function skillStatus(grade) { return {passed:"Passed",wrong_answer:"Wrong answer",format_error:"Format issue",incomplete:"Reply cut short",needs_review:"Needs review",unexpected_tool:"Unexpected tool request",legacy_failure:"Saved failure (old check)"}[grade.status || (grade.passed ? "passed" : "legacy_failure")]; }
 function renderSkills() {
-  const allJobs=state.jobs.filter(job=>job.action==="check_model"), jobs=filterSkillJobs(allJobs,$("skills-history-search").value), historyKey=jobs.map(job=>`${job.id}:${job.status}`).join()+$("skills-history-search").value; $("skills-history-count").textContent=`${jobs.length} of ${allJobs.length} saved tests match`;
+  const allJobs=state.jobs.filter(job=>job.action==="check_model"), eligible=allJobs.filter(job=>($("skills-history-archived").checked || !state.jobDetails?.[job.id]?.archived) && (!$("skills-history-favorites").checked || state.jobDetails?.[job.id]?.favorite)), jobs=filterSkillJobs(eligible,$("skills-history-search").value,state.jobDetails || {}), historyKey=jobs.map(job=>`${job.id}:${job.status}`).join()+$("skills-history-search").value+state.jobDetailsRevision+$("skills-history-favorites").checked+$("skills-history-archived").checked; $("skills-history-count").textContent=`${jobs.length} of ${allJobs.length} saved tests match`;
   renderConsistencyChoices(allJobs);
-  if(state.skillsHistoryKey!==historyKey) { $("skills-history").replaceChildren(...jobs.map(job=>option(job.id,`${job.request.model} · ${skillSuiteName(job.request.test_suite)} · ${job.request.difficulty === "challenging" ? "Challenging" : "Standard"} · ${job.request.selected_skills?.join(", ") || "All skills"} · ${job.status} · ${new Date(job.created_at).toLocaleString("en-GB",{timeZone:"Europe/Bucharest"})}`))); state.skillsHistoryKey=historyKey; }
+  if(state.skillsHistoryKey!==historyKey) { $("skills-history").replaceChildren(...jobs.map(job=>option(job.id,`${state.jobDetails?.[job.id]?.favorite ? "★ " : ""}${state.jobDetails?.[job.id]?.title ? state.jobDetails[job.id].title+" · " : ""}${job.request.model} · ${skillSuiteName(job.request.test_suite)} · ${job.request.difficulty === "challenging" ? "Challenging" : "Standard"} · ${job.request.selected_skills?.join(", ") || "All skills"} · ${job.status} · ${new Date(job.created_at).toLocaleString("en-GB",{timeZone:"Europe/Bucharest"})}`))); state.skillsHistoryKey=historyKey; }
   const job=jobs.find(item=>item.id===state.skillsJobId) || jobs[0];
-  if(!job) { $("skills-status").textContent=allJobs.length ? "No saved tests match this search." : "No skill tests have been run yet."; $("skills-results").replaceChildren(); for(const id of ["skills-export","skills-export-shown","skills-review","skills-stop","skills-continue","skills-restore","skills-html-export","skills-page-prev","skills-page-next","skills-repeat","skills-retry","skills-compare-source","skills-notes-export"]) $(id).disabled=true; $("skills-filter-count").textContent="No saved answers selected."; state.skillsSignature=null; return; }
+  if(!job) { $("skills-run-label").textContent=""; $("skills-status").textContent=allJobs.length ? "No saved tests match this search." : "No skill tests have been run yet."; $("skills-results").replaceChildren(); for(const id of ["skills-export","skills-export-shown","skills-review","skills-stop","skills-continue","skills-restore","skills-html-export","skills-page-prev","skills-page-next","skills-edit-details","skills-compare-reference","skills-repeat","skills-retry","skills-compare-source","skills-notes-export"]) $(id).disabled=true; $("skills-filter-count").textContent="No saved answers selected."; state.skillsSignature=null; return; }
   state.skillsJobId=job.id; $("skills-history").value=job.id; renderSkillComparisonChoices(allJobs,job.id); $("skills-restore").disabled=false; $("skills-notes-export").disabled=!job.result?.results?.length; $("skills-compare-source").disabled=!job.request.retry_of || !job.result?.results?.length; $("skills-retry").disabled=!["complete","failed","cancelled"].includes(job.status) || state.skillAnalysis?.job_id!==job.id || !state.skillAnalysis.retryable_questions || state.jobs.some(item=>["running","queued"].includes(item.status)); $("skills-html-export").disabled=!job.result?.results?.length; if(state.skillsPageJob!==job.id) {state.skillsPage=0;state.skillsPageJob=job.id;}
+  $("skills-edit-details").disabled=false;
+  $("skills-compare-reference").disabled=!state.referenceJobId || state.referenceJobId===job.id || !state.jobs.some(item=>item.id===state.referenceJobId) || !job.result?.results?.length;
+  $("skills-run-label").textContent=state.jobDetails?.[job.id]?.title || "";
   $("skills-repeat").disabled=!["complete","failed","cancelled"].includes(job.status) || !job.result?.results?.length || state.jobs.some(item=>["running","queued"].includes(item.status));
   $("skills-stop").disabled=!["running","queued"].includes(job.status);
   $("skills-continue").disabled=!job.can_continue || state.jobs.some(item=>["running","queued"].includes(item.status));
@@ -395,7 +403,7 @@ function renderSkillAnswers() {
     details.append(detailBlock("Original request, reply and usage",JSON.stringify({request:item.response.request_envelope,response:item.response.response_envelope,usage:item.response.usage,finish_reason:item.response.finish_reason},null,2))); box.append(details);
   }
 }
-function openSkills(id) { if(id) state.skillsJobId=id; $("skills-model").replaceChildren(...state.models.map(model=>option(model.name,model.name))); if(state.models.some(model=>model.name===state.defaultModel)) $("skills-model").value=state.defaultModel; $("skills-submit").disabled=!state.models.length; $("skills-error").textContent=state.models.length ? "" : "No installed text model is available. Check the model server."; renderSkills(); if(!$("skills-dialog").open) $("skills-dialog").showModal(); }
+function openSkills(id) { if(id) {state.skillsJobId=id; $("skills-history-search").value=""; if(state.jobDetails?.[id]?.archived) $("skills-history-archived").checked=true; if(!state.jobDetails?.[id]?.favorite) $("skills-history-favorites").checked=false;} $("skills-model").replaceChildren(...state.models.map(model=>option(model.name,model.name))); if(state.models.some(model=>model.name===state.defaultModel)) $("skills-model").value=state.defaultModel; $("skills-submit").disabled=!state.models.length; $("skills-error").textContent=state.models.length ? "" : "No installed text model is available. Check the model server."; renderSkills(); if(!$("skills-dialog").open) $("skills-dialog").showModal(); }
 $("skills-open").onclick=()=>openSkills();
 const basicSkillNames=["Arithmetic","Finding the right record","JSON output","Following instructions","Sorting and removing duplicates"], extraSkillNames=["Combining order records","Planning dependent tasks","Counting exact words"];
 function chosenSkills() { return $("skills-focus").value==="selected" ? [...document.querySelectorAll('#skills-pick-options input:checked')].map(input=>input.value) : $("skills-focus").value ? [$("skills-focus").value] : null; }
@@ -520,4 +528,16 @@ $("skills-consistency-run").onclick=async()=>{
 };
 $("skills-consistency-export").onclick=()=>{if(state.skillConsistency) downloadSkillJson(state.skillConsistency,"repeated-results.json");};
 
-installSuiteWorkbench({api,node,option,state,openSkills,skillFormSettings,applySkillSettings,downloadSkillJson});
+const queueWorkbench=installQueueWorkbench({api,node,state,openSkills,skillFormSettings,refreshJobs,downloadSkillJson});
+installSuiteWorkbench({api,node,option,state,openSkills,skillFormSettings,applySkillSettings,downloadSkillJson,enqueueSuite:queueWorkbench.enqueueSuite});
+
+for(const id of ["skills-history-favorites","skills-history-archived"]) $(id).addEventListener("change",renderSkills);
+$("skills-compare-reference").onclick=()=>{const source=state.referenceJobId,current=state.skillsJobId;if(!source || !current || !state.jobs.some(job=>job.id===source)) {$("skills-error").textContent="Choose an available saved reference in Saved jobs first.";return;} renderSkillComparisonChoices(state.jobs.filter(job=>job.action==="check_model"),current);$("skills-compare-previous").value=source;$("skills-compare-current").value=current;clearSkillComparison();$("skills-comparison").open=true;$("skills-compare-form").requestSubmit();};
+const savedJobOrganizer=installResultsOrganizer({api,node,option,state,refreshJobs,openSkills,renderSkills,downloadSkillJson});
+state.openSavedJob=savedJobOrganizer.open;
+
+const modelWorkspace=installModelWorkspace({api,node,option,state,checkEngine,refreshJobs,openSkills,applySkillSettings,downloadSkillJson});
+state.openModelWorkspace=modelWorkspace.open;
+
+const projectWorkspace=installProjectWorkspace({api,node,state,refreshJobs,openQueue:queueWorkbench.open,downloadSkillJson});
+state.openProject=projectWorkspace.open;

@@ -1,16 +1,16 @@
 # Validation record
 
-Validated locally on 21 November 2026 with Python 3.12.14. Changes remain local; no commits
+Validated locally on 22 November 2026 with Python 3.12.14. Changes remain local; no commits
 or pushes were made during this feature extension.
 
 ## Current verification
 
 | Check | Evidence |
 |---|---|
-| Unit and integration tests | 541 offline tests passed on 21 November with fourteen opt-in hardware tests deselected; a saved suite was loaded and executed through the UI with two actual Qwen replies |
+| Unit and integration tests | 594 offline tests passed on 22 November with fifteen opt-in hardware tests deselected; project links and origin tracking were verified with actual prompt and queued skill jobs |
 | Live replay workflow | Real evaluation, cancellation/resume, grounded analysis and fresh recorded replay passed on 17 November; advanced hardware probe and arithmetic smoke were also verified on 16 November |
-| Dashboard browser and frontend checks | Real Chrome workflow checks passed at 1440×900 and 390×844; nine Node tests passed |
-| Strict typing | mypy passes across 41 source modules |
+| Dashboard browser and frontend checks | Real Chrome workflow checks passed at 1440×900 and 390×844; ten Node tests passed |
+| Strict typing | mypy passes across 45 source modules |
 | Lint and formatting | Ruff checks all source and test files |
 | Readiness and real inference probe | Ollama 0.40.13, Qwen 2.5 7B, actual answer `108` to `93 + 15` |
 | Archive-only regeneration | Rebuilt the six-pair live audit with `inference_requested: false` |
@@ -475,3 +475,148 @@ Proof is retained under `reports/suite-workbench-20261121` and
 `reports/dashboard-verification`, including the portable exported suite and screenshots.
 The temporary verification dashboard used a separate reports root; the main library
 was not populated with test fixtures. No commits or pushes were made.
+
+## Work queue and batch suite launching, 22 November
+
+Added a persistent work queue for model-skill setups: direct setup capture, launch from
+saved suites, multi-suite batch capture, sequential dispatch through the existing worker,
+reordering pending work, removal before inference, pause-after-current, pause-and-stop,
+fresh repeated items, configurable pause-on-runtime-error policy, actual reply progress,
+result links, summary export and finished-list cleanup without deleting measured data.
+Queue/suite revision checks protect against stale edits. Saved suites are copied at their
+selected revisions; subsequent library edits do not change pending requests.
+
+Queues restore paused, even if they were running when the app closed. A physical server
+restart retained two pending suite setups, kept the two measured jobs unchanged and
+started no new jobs. Shutdown disarms dispatch even if the queue file was removed.
+Resumed jobs keep their queue entry, show current progress, and update their final status.
+Missing historical reply counts remain unknown rather than being invented.
+
+Actual Qwen hardware verification collected two separate arithmetic replies, paused after
+an intervening missing-installed-model error, retained the following item pending, and ran
+it after an explicit restart. Chrome verification collected two further native replies
+from a challenging corrected-event suite and a custom current-record suite. Both ran
+sequentially; pausing retained pending work. The requests retained captured seed 7744
+even after the library suite was edited to seed 9999. Each actual text matched its native
+response envelope. Clearing finished queue entries preserved the original job objects.
+Wrong model answers remain completed jobs and are graded by the unchanged checker.
+
+The first Chrome check caught an Add-another-run button left disabled after an update;
+the control-state refresh was fixed and the complete workflow passed afterward. Desktop
+and mobile renders were inspected at 1440×900 and 390×844, including restored pending
+controls and measured completed-job history. The original dashboard/custom-editor/
+repeat-report browser workflows and nine frontend tests passed. Eleven offline queue
+checks plus the existing suite total 552 passing offline tests; fifteen opt-in hardware
+tests were deselected in that run. Ruff checks/formatting cover 79 Python files and typing
+passes across 42 source modules.
+
+A final read-only audit covered 200 native replies in 47 reports with no classification
+changes, unverified replies or input issues. All 47 source report hashes stayed unchanged.
+This is sampled evidence, not a general false-positive guarantee. Queue evidence, including
+native runs, state snapshots and the audit, is under `reports/job-queue-20261122`; UI
+screenshots and exported summary are under `reports/dashboard-verification`.
+No simulated production replies, commits or GitHub pushes were added.
+
+## Saved-job organization and comparison references, 22 November
+
+Added human run names, job notes, tags, favorites, archive/restore, status/type/model
+filters, name/date/favorite sorting, pagination and filtered catalogue export. These
+features cover loaded dashboard jobs. Names, notes and tags are also searchable in
+Model skills, with favorite/archive filters and direct details editing. Explicit result
+navigation restores the selected job's visibility rather than opening a different job.
+A reusable reference pointer integrates with the existing exact-question comparison.
+
+All organization data lives in a separate versioned file. Eleven backend checks cover
+round trips, archive-independent references, stale revisions, metadata limits, duplicate
+and deeply nested corrupt JSON preservation, session protection, unknown jobs,
+reference eligibility, immutable measured snapshots and original job-file hashes.
+A frontend regression checks title/tag/note search without changing the job objects.
+The full run passed 563 offline tests with fifteen hardware tests deselected, ten
+frontend tests, Ruff checks/formatting across 81 Python files and typing across 43
+source modules.
+
+Chrome used the actual previously measured Qwen queue jobs. The workflow named and
+annotated a run, filtered by tags/favorites/status, exported exactly one matching job,
+selected a comparison reference and compared one identical native question contract.
+It then exercised named skill-history search, archive/restore, concurrent-edit rejection
+with the unsaved draft preserved, explicit reload and page-reload persistence. Every
+original job object remained deeply equal before and after the workflow; no inference
+jobs or substitute replies were created. The existing custom-editor, repeat-report
+and full dashboard browser workflows also passed.
+
+The initial mobile check detected navigation overflow after the new section was added.
+Navigation now wraps into a three-column grid on small screens. Desktop/mobile renders
+were inspected at 1440×900 and 390×844; the completed workflow reported no document
+overflow or browser errors. Screenshots and the filtered catalogue are retained under
+`reports/dashboard-verification`. Organizer verification used the existing isolated
+native queue proof; the main job-detail store was not populated with fixtures.
+No commits or GitHub pushes were made.
+
+## Model workspace and native prompt conversations, 22 November
+
+Added installed-model inspection and snapshot export; prompt composition with explicit
+system instructions and budgets; real saved replies; same-version conversation follow-ups;
+independent drafts and pinned reruns; cancellation; native evidence export; ungraded
+reply comparisons; user-authored custom-test draft conversion; and Saved jobs integration.
+Prompt jobs share the existing single worker and do not publish automatic correctness scores.
+
+Live Chrome verification retained six actual Qwen replies across two first-request /
+follow-up / rerun workflows. Native responses, complete conversation inputs, model digests,
+usage and finish metadata were retained. Follow-ups included the exact saved assistant
+text. Pinned reruns kept original messages and model version. The model answered the
+record-extraction task with explanatory text despite the integer-only request; that
+original text was preserved and shown ungraded. Follow-ups provided the requested
+explanation and doubled count. No replacement or polished completion was substituted.
+
+Inspection read actual runtime metadata without adding a job. Exports retained original
+reply evidence and comparison inputs. Preparing a custom test used the independently
+supplied integer answer 42, not the model's reply, and created no inference job. Saved jobs
+reopened the selected prompt reply. Existing native evidence was rechecked with the
+read-only reuse mode after browser-selector timing fixes; no further inference was needed.
+Desktop/mobile screenshots were inspected at 1440×900 and 390×844 with no overflow.
+
+Twenty-one new offline checks cover invalid limits, Unicode, exact instructions,
+context byte limits, unchanged native parent replies, modified context/model/version/
+wrapper/cutoff rejection, session protection, missing parents and recovery of committed
+native replies after interruption. Full verification: 584 offline tests, ten frontend
+tests, Ruff checks/formatting across 83 Python files, and typing across 44 source modules.
+The existing custom-editor, repeat-report and complete dashboard browser workflows passed.
+
+Prompt records and proof artifacts are under `reports/model-workspace-20261122`, with
+screenshots and exports under `reports/dashboard-verification`. These prompt replies are
+ungraded and are not added to the existing graded saved-skill audit. Earlier replies and
+scores were not rewritten. No commits or GitHub pushes were made.
+
+## Project workspace and durable launch origin, 22 November
+
+Added projects with suite/manual-job links, notes, tags, favorites, manual workflow
+statuses and checklists, search, copy, archive/restore and saved overview exports.
+Projects batch-launch saved suite revisions through the existing queue. Launched job
+metadata retains project ID/name/revision independently of native prompts and scores.
+The project overview derives launched-job links from job metadata, so clearing queue
+history does not lose them. Saved jobs can navigate back to the launch project.
+
+Chrome verification linked one actual ungraded prompt job manually, created a project
+with a checked/manual task, linked a saved suite, copied and archived/restored a project,
+queued the original suite and collected an actual Qwen skill reply. Native text matched
+its original response envelope, and project annotations were absent from model input.
+The overview showed both manual and automatic links after queue history was cleared.
+It then verified origin navigation, stale edit rejection with draft preservation,
+explicit reload, saved export, page reload and 1440×900/390×844 responsive layouts.
+
+A physical server restart retained project notes and checklist ticks, plus the job's
+original project revision 1 while the project itself was revision 2. Both measured jobs
+stayed complete and no new inference was started. The existing custom-editor,
+repeat-report and full-dashboard browser regressions passed. Ten new offline checks
+cover persistence, archive/revision conflicts, metadata/link validation, corrupt-file
+preservation, session protection and transfer of origin metadata into dispatched jobs.
+The full suite passed 594 offline tests (fifteen hardware tests deselected), ten frontend
+tests, Ruff checks/formatting across 85 Python files and typing across 45 source modules.
+
+A read-only audit reviewed 201 actual saved skill replies in 48 reports, found no changed
+classifications, unverified replies or input issues, and preserved all source hashes.
+The additional project-linked prompt remains ungraded and outside that skill audit.
+Project workflow and checklist status are human annotations, not model-success metrics.
+Evidence is retained under `reports/project-workspace-20261122` and
+`reports/dashboard-verification`. The main project library was not seeded with fixtures.
+No commits or GitHub pushes were made.

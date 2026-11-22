@@ -1,5 +1,5 @@
 // Definition authoring and saved setups. This module never starts model jobs.
-export function installSuiteWorkbench({api,node,option,state,openSkills,skillFormSettings,applySkillSettings,downloadSkillJson}) {
+export function installSuiteWorkbench({api,node,option,state,openSkills,skillFormSettings,applySkillSettings,downloadSkillJson,enqueueSuite}) {
   const $=id=>document.getElementById(id), clone=value=>JSON.parse(JSON.stringify(value));
   let mode='visual', undo=null, suites=[], selected=null, draft=null;
   const status=text=>{$('suite-status').textContent=text;};
@@ -73,7 +73,7 @@ export function installSuiteWorkbench({api,node,option,state,openSkills,skillFor
     $('suite-title').value=value.title || ''; $('suite-description').value=value.description || '';
     $('suite-tags').value=(value.tags || []).join(', '); $('suite-favorite').checked=!!value.favorite;
     $('suite-editor-heading').textContent=saved?`Edit suite · revision ${saved.revision}`:'New suite';
-    for(const id of ['suite-load','suite-copy','suite-export','suite-archive','suite-reload']) $(id).disabled=!saved;
+    for(const id of ['suite-load','suite-copy','suite-export','suite-archive','suite-reload','suite-queue']) $(id).disabled=!saved;
     $('suite-save').disabled=false; $('suite-update-setup').disabled=false;
     $('suite-archive').textContent=value.archived?'Restore suite':'Archive suite'; summary();
   }
@@ -113,6 +113,7 @@ export function installSuiteWorkbench({api,node,option,state,openSkills,skillFor
   $('suite-update-setup').onclick=()=>{try {draft.settings=currentSettings();summary();status('Current setup captured. Save to update this suite.');} catch(error) {status(error.message);}};
   $('suite-export').onclick=()=>{if(selected) {const {id,revision,created_at,updated_at,...definition}=selected;downloadSkillJson({format_version:1,kind:'test_suite',definition},`${selected.title.replace(/[^a-zA-Z0-9_-]/g,'_') || 'test-suite'}.json`);}};
   $('suite-import').onchange=async event=>{const file=event.target.files[0];if(!file) return;try {if(file.size>65536) throw new Error('Suite imports must fit within 64 KiB.');const data=JSON.parse(await file.text());if(data.format_version!==1 || data.kind!=='test_suite' || !data.definition || typeof data.definition.title!=='string' || typeof data.definition.description!=='string' || !Array.isArray(data.definition.tags) || data.definition.tags.some(tag=>typeof tag!=='string') || !data.definition.settings || typeof data.definition.settings!=='object' || Array.isArray(data.definition.settings) || typeof data.definition.favorite!=='boolean' || typeof data.definition.archived!=='boolean' || Object.keys(data.definition).some(key=>!['title','description','tags','favorite','archived','settings'].includes(key))) throw new Error('Import an exported test-suite definition.');fillEditor({...data.definition,archived:false});status('Imported as a new draft. Save validates the complete setup before it can be loaded.');} catch(error) {status(error.message);} finally {event.target.value='';}};
+  $('suite-queue').onclick=async()=>{if(!selected)return;try {await enqueueSuite({id:selected.id,revision:selected.revision});status('Saved suite revision added to the queue. Unsaved editor changes were not included.');} catch(error) {status(error.message);}};
   $('suite-load').onclick=()=>{if(!selected) return;$('suite-dialog').close();openSkills();applySkillSettings(clone(selected.settings));$('skills-error').textContent=`Loaded suite: ${selected.title}. ${$('skills-model').value?'Review the setup and run when ready.':'Choose an installed model before running.'} No model call was made.`;};
   renderBuilder();summary();
 }

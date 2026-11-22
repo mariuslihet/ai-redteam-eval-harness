@@ -18,7 +18,11 @@ from pydantic import Field, ValidationError
 from redteam_eval.dashboard_data import ReportStore
 from redteam_eval.dashboard_jobs import JobManager, ModelCheckRequest
 from redteam_eval.inspection import inspect_pair
+from redteam_eval.job_details import DetailsRequest, JobDetailsStore, ReferenceRequest
+from redteam_eval.job_queue import JobQueue, QueueAction, QueueAdd, QueueBatch
+from redteam_eval.model_workspace import ModelSelection
 from redteam_eval.models import BackendConfig, Model, Thresholds
+from redteam_eval.projects import ProjectLaunchRequest, ProjectSaveRequest, ProjectStore
 from redteam_eval.regression import RegressionLimits, compare_runs
 from redteam_eval.reporting import gate, summarize
 from redteam_eval.review_notes import NoteRequest
@@ -60,6 +64,9 @@ class DashboardApp:
         self.store = ReportStore(root)
         self.jobs = JobManager(self.store, backend)
         self.suites = SuiteLibrary(self.store.root)
+        self.queue = JobQueue(self.jobs)
+        self.job_details = JobDetailsStore(self.store.root)
+        self.projects = ProjectStore(self.store.root)
         self.port, self.csrf = port, secrets.token_urlsafe(32)
 
     def handle(
@@ -119,6 +126,10 @@ class DashboardApp:
                     "dashboard.mjs",
                     "dashboard-core.mjs",
                     "suite-workbench.mjs",
+                    "queue-workbench.mjs",
+                    "results-organizer.mjs",
+                    "model-workspace.mjs",
+                    "project-workspace.mjs",
                 }:
                     return json_reply({"error": "Asset not found"}, 404)
                 content_type = (
@@ -176,6 +187,12 @@ class DashboardApp:
                     content_type="application/octet-stream",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'},
                 )
+            if method == "GET" and route == "/api/projects":
+                return json_reply(self.projects.read())
+            if method == "GET" and route == "/api/job-details":
+                return json_reply(self.job_details.read())
+            if method == "GET" and route == "/api/queue":
+                return json_reply(self.queue.snapshot())
             if method == "GET" and route == "/api/test-suites":
                 return json_reply(self.suites.read())
             if method == "GET" and len(parts) == 3 and parts[:2] == ["api", "jobs"]:
@@ -198,6 +215,128 @@ class DashboardApp:
                 payload = json.loads(body)
                 if not isinstance(payload, dict):
                     raise ValueError("JSON request must be an object")
+                if route == "/api/projects":
+                    project_request = ProjectSaveRequest.model_validate(payload)
+                    existing: dict[str, Any] = next(
+                        (
+                            row
+                            for row in self.projects.read()["projects"]
+                            if row["id"] == project_request.id
+                        ),
+                        {},
+                    )
+                    available_suites = {row["id"] for row in self.suites.read()["suites"]}
+                    if any(
+                        identifier not in available_suites
+                        and identifier not in existing.get("suite_ids", [])
+                        for identifier in project_request.suite_ids
+                    ):
+                        raise ValueError("New suite links must refer to existing saved suites")
+                    if any(
+                        identifier not in self.jobs.jobs
+                        and identifier not in existing.get("job_ids", [])
+                        for identifier in project_request.job_ids
+                    ):
+                        raise ValueError(
+                            "New job links must refer to jobs loaded in this dashboard"
+                        )
+                    return json_reply(self.projects.save(project_request))
+                if route == "/api/project-queue":
+                    launch = ProjectLaunchRequest.model_validate(payload)
+                    project = next(
+                        (row for row in self.projects.read()["projects"] if row["id"] == launch.id),
+                        None,
+                    )
+                    if project is None or project["archived"]:
+                        raise ValueError("Choose an existing unarchived project")
+                    if project["revision"] != launch.revision:
+                        raise RuntimeError("Project changed; refresh it before queuing")
+                    if not project["suite_ids"] or set(launch.suite_revisions) != set(
+                        project["suite_ids"]
+                    ):
+                        raise ValueError("Refresh the linked suite revisions before launching")
+                    suites = {row["id"]: row for row in self.suites.read()["suites"]}
+                    definitions = []
+                    for identifier in project["suite_ids"]:
+                        suite = suites.get(identifier)
+                        if suite is None or suite["archived"]:
+                            raise ValueError("Linked suites must exist and be unarchived")
+                        if launch.suite_revisions[identifier] != suite["revision"]:
+                            raise RuntimeError(
+                                "A linked suite changed; refresh source links before queuing"
+                            )
+                        definitions.append(
+                            {
+                                "title": (project["title"] + " / " + suite["title"])[:100],
+                                "settings": suite["settings"],
+                                "suite_id": identifier,
+                                "suite_revision": suite["revision"],
+                                "project_id": project["id"],
+                                "project_title": project["title"],
+                                "project_revision": project["revision"],
+                            }
+                        )
+                    return json_reply(self.queue.add(definitions, launch.queue_revision))
+                if route == "/api/model-info":
+                    model_request = ModelSelection.model_validate(payload)
+                    return json_reply(asyncio.run(self.jobs.inspect_model(model_request.model)))
+                if route == "/api/job-details":
+                    details_request = DetailsRequest.model_validate(payload)
+                    if details_request.job_id not in self.jobs.jobs:
+                        raise ValueError("Choose a job loaded in the saved history")
+                    return json_reply(self.job_details.save(details_request))
+                if route == "/api/job-reference":
+                    reference_request = ReferenceRequest.model_validate(payload)
+                    if reference_request.job_id is not None:
+                        reference_job = self.jobs.jobs.get(reference_request.job_id)
+                        if (
+                            reference_job is None
+                            or reference_job.action != "check_model"
+                            or reference_job.status not in ("complete", "failed", "cancelled")
+                            or not (reference_job.result or {}).get("results")
+                        ):
+                            raise ValueError(
+                                "Choose a stopped model-skill job with actual saved replies as the reference"
+                            )
+                    return json_reply(self.job_details.reference(reference_request))
+                if route == "/api/queue/add":
+                    addition = QueueAdd.model_validate(payload)
+                    return json_reply(
+                        self.queue.add(
+                            [
+                                {
+                                    "title": addition.title,
+                                    "settings": addition.settings.model_dump(mode="json"),
+                                }
+                            ],
+                            addition.expected_revision,
+                        )
+                    )
+                if route == "/api/queue/action":
+                    return json_reply(self.queue.action(QueueAction.model_validate(payload)))
+                if route == "/api/queue/suites":
+                    batch = QueueBatch.model_validate(payload)
+                    if len({item.id for item in batch.suites}) != len(batch.suites):
+                        raise ValueError("Choose distinct saved suites")
+                    library = {row["id"]: row for row in self.suites.read()["suites"]}
+                    definitions = []
+                    for suite_selection in batch.suites:
+                        suite = library.get(suite_selection.id)
+                        if suite is None or suite["archived"]:
+                            raise ValueError("Choose existing, unarchived suites")
+                        if suite["revision"] != suite_selection.revision:
+                            raise RuntimeError(
+                                "A selected suite changed. Refresh the library before queuing it."
+                            )
+                        definitions.append(
+                            {
+                                "title": suite["title"],
+                                "settings": suite["settings"],
+                                "suite_id": suite["id"],
+                                "suite_revision": suite["revision"],
+                            }
+                        )
+                    return json_reply(self.queue.add(definitions, batch.expected_revision))
                 if route == "/api/test-suites":
                     return json_reply(self.suites.save(SuiteSaveRequest.model_validate(payload)))
                 if route == "/api/jobs":
@@ -403,6 +542,10 @@ def serve_dashboard(root: Path, backend: BackendConfig, port: int = 8765) -> Non
     except KeyboardInterrupt:
         pass
     finally:
+        try:
+            app.queue.shutdown()
+        except (OSError, ValueError):
+            logging.getLogger(__name__).exception("Could not persist paused queue at shutdown")
         with app.jobs.lock:
             if app.jobs.active:
                 app.jobs.cancel(app.jobs.active)

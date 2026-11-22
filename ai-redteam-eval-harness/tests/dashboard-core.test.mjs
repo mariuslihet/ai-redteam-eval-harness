@@ -98,3 +98,12 @@ test('skill history search combines saved metadata without changing jobs',()=>{
  assert.equal(filterSkillJobs(jobs,'no matching test').length,0);
  assert.equal(JSON.stringify(jobs),before);
 });
+
+
+test('human job names tags and notes are searchable without modifying measured jobs',()=>{
+ const jobs=[{id:'a',action:'check_model',status:'complete',request:{model:'Installed',seed:1}}];
+ const before=JSON.stringify(jobs), details={a:{title:'Release review',tags:['stock'],note:'Check latest revision'}};
+ for(const query of ['RELEASE','stock','latest revision']) assert.equal(filterSkillJobs(jobs,query,details)[0],jobs[0]);
+ assert.equal(filterSkillJobs(jobs,'unknown name',details).length,0);
+ assert.equal(JSON.stringify(jobs),before);
+});

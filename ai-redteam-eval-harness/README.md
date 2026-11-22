@@ -915,6 +915,185 @@ different dashboard and `DASHBOARD_WORKBENCH_LIVE=1` to run the loaded two-quest
 suite using an actual installed model. Browser checks create saved suite definitions;
 use a separate reports root for verification.
 
+### Work queue and batch suite launching
+
+Open **Work queue** to prepare sequential local runs. Use **Add setup to queue** in
+Model skills, **Queue saved suite** in Suite library, or choose up to ten suites under
+**Add saved suites in a batch**. A batch follows the displayed suite order. Queued
+setups capture the saved revision, selected questions, model, seed and limits; later
+library edits do not change them. No model job is created until dispatch.
+
+New queues start paused. **Start queue** runs one item at a time, sharing the existing
+local worker with manual evaluations and analyses. If another job is active, queued
+work waits. While the queue is running, newly added items may start automatically.
+Each item receives its own budgets when it starts; time spent waiting does not use
+its inference time allowance.
+
+- **Move up/down** changes pending order. **Remove before starting** records a removed
+  item without inference. Running items cannot be reordered or removed this way.
+- **Pause after current job** retains pending work while allowing the current job to
+  finish. **Pause and stop current job** also requests cancellation and preserves
+  completed replies.
+- The default policy pauses after a queued job fails to run or is stopped. A completed
+  model reply with a wrong answer or format issue is still a completed job; those
+  checker failures do not halt the queue. The policy can be changed in the dialog.
+- **Add another run** copies the full captured setup into a fresh queue item with its
+  own budgets. To continue an interrupted original job, open its actual replies and
+  use the existing continuation control instead.
+- Cards show actual saved reply counts and link to the original job. Older jobs that
+  are not loaded are reported explicitly rather than opening a different result.
+- **Export queue summary** saves statuses, captured run-limit summaries, suite revisions
+  and original job IDs. It does not include full prompts, expected answers or replies.
+- **Clear finished list entries** removes queue metadata only. Original jobs, reports,
+  model replies and checkpoints are preserved. Resumed active jobs stay in the list.
+
+Queues persist in `.job-queue.json` under the configured reports root and always reopen
+paused after app restart. Previously active work requires review; it is never silently
+repeated. Corrupt queue files are preserved and reported. Limits are 20 pending items,
+100 queue history entries and an 8 MiB queue file. Archived suites must be restored
+before batch launching. Stale queue or suite revisions are rejected before mutation.
+
+The opt-in hardware workflow in `tests/test_dashboard_job_queue.py` verifies sequential
+actual inference and pause/restart after a missing-model error. Use a fresh
+`REDTEAM_QUEUE_LIVE_ROOT` for each proof. `tests/dashboard-queue.browser.mjs` verifies
+queueing, ordering, cancellation, repeat, frozen suite revisions and export against a
+fresh isolated reports root on port 8766. `DASHBOARD_QUEUE_LIVE=1` adds two actual model
+jobs and verifies pausing between them and preserving results when clearing history.
+
+### Saved jobs, notes and comparison references
+
+Open **Saved jobs** to organize the jobs loaded by the dashboard. Give a job a name,
+add notes and tags, mark it as a favorite, or archive/restore its list entry. Search
+across these details and original IDs/models, filter by job status/type/model, sort by
+name/date/favorites, and browse pages of twenty entries. Job status describes execution,
+not whether every model answer was correct.
+
+**Export matching jobs** includes every matching loaded job across all pages, with its
+human details and original job/result IDs. It is a catalogue, not a new evaluation or a
+replacement for native reply exports. The list is limited to the dashboard's loaded
+history rather than a scan of every report directory.
+
+Names, tags and notes also become searchable in Model skills. Its saved-test list can
+show favorites only or include archived jobs. **Edit run details** opens the organizer
+for the selected job. Opening an explicit saved result restores its visibility even if
+previous history filters would have hidden it.
+
+For a stopped model-skill job with saved replies, choose **Use as comparison reference**.
+Then select another saved skill run and click **Compare with reference**. The existing
+comparison checks exact matched questions and original replies using the current checker;
+it does not call a model or assume unlike tasks are comparable. **Clear comparison
+reference** removes only the pointer. Archiving a reference does not delete its replies
+or prevent comparison while that job remains loaded.
+
+Organization data persists separately in `.job-details.json` under the reports root.
+It never overwrites original requests, model replies, automated grades or checkpoints.
+The store supports 1,000 detail records, an 8 MiB file, names up to 100 characters,
+notes up to 4,000 characters and eight distinct tags of up to 24 characters each.
+Concurrent edits use revision checks. A stale save keeps the draft; **Reload saved
+details** explicitly replaces it with the latest saved values. Corrupt detail files
+are reported and preserved.
+
+`tests/dashboard-organizer.browser.mjs` verifies editing, filtering, export, reference
+comparison, history integration, archive/restore, conflict recovery, reload persistence
+and responsive layouts. It needs an isolated dashboard on port 8766 with two real saved
+skill runs containing the same question contract; it does not request inference or
+create replacement responses. `DASHBOARD_URL` can override the address.
+
+### Model workspace and saved conversations
+
+Open **Model workspace** to inspect an installed completion model or send a one-off
+prompt. **Inspect selected model** reads actual local runtime metadata: model version,
+size, family, quantization, advertised context capacity, loaded context and reported
+GPU memory when available. Missing fields stay unknown. **Export model snapshot**
+saves that point-in-time observation. Inspection does not generate a model reply.
+
+Write system instructions and a task, choose a seed and reply/time/token limits, and
+use **Send to local model**. This uses the same single local worker as evaluations and
+the suite queue. Actual text, native request/response envelopes, usage, finish metadata
+and model version are saved as a prompt job. No response schema or tools are supplied;
+tool requests are recorded but never executed. Prompt replies are ungraded: job completion
+is not an answer-correctness claim. **Stop current reply** requests cancellation.
+
+- **Continue conversation** creates a separate job using unchanged native earlier
+  messages and the actual saved assistant reply. It keeps the same model version and
+  system instructions. Conversations support six replies and 32,000 input bytes.
+- Each turn has its own allowance. Earlier exchanges are sent again as input and count
+  toward the new request's recorded input usage.
+- **Load as new draft** loads only that turn's prompt and settings, with no earlier
+  conversation context and no inference. **New conversation** also clears the parent.
+- **Run same request again** creates a fresh job and pins the saved model version;
+  a changed installed version requires an independent draft instead.
+- **Export reply evidence** retains original messages, settings and the full native
+  reply. **Compare saved prompt replies** shows original text and whether messages/model
+  versions match; this comparison does not grade replies or call another model.
+- **Create a custom test draft** accepts your independently supplied expected answer
+  for a one-off task. It validates the definition and loads it into Model skills without
+  inference. The model reply is never automatically used as an answer key. Review the
+  combined instructions/task before running the new test.
+
+Prompt jobs appear in **Saved jobs**, where they can be named, tagged, archived and
+reopened. Prompt jobs cannot be chosen as a graded skill-comparison reference. Records
+are stored as `prompt-reply.json` beside the job metadata. If the app is interrupted
+after committing a reply, startup validates and recovers its native evidence without
+rewriting it or silently re-executing the task.
+
+Limits: task 12,000 characters, system instructions 8,000, optional label 80, reply
+64–4,096 tokens, total observed allowance up to 200,000 tokens, and reply time up to
+180 seconds. Actual server errors, cutoffs and allowance overruns remain visible;
+received replies are retained even when the job cannot finish normally.
+
+`tests/dashboard-model-workspace.browser.mjs` verifies the workspace against an isolated
+server on port 8766 with actual local inference. It records a first reply, follow-up and
+pinned rerun, checks native envelopes and source preservation, exports evidence and
+prepares an independently authored test. `DASHBOARD_WORKSPACE_REUSE=1` rechecks the
+read-only UI against those existing native jobs without generating replacements.
+
+### Project workspace
+
+Open **Projects** to group saved suites and jobs around a release, investigation or
+model comparison. Give a project a description, notes, tags and favorite marker.
+Choose a manual workflow status and maintain a checklist of your own work. Neither
+workflow status nor checklist ticks change model grades or claim model correctness.
+
+Under **Link saved suites**, select up to ten suites. Under **Link saved jobs manually**,
+select jobs loaded by this dashboard. Missing older links remain visible and can be
+kept or removed; editing notes does not silently discard them. Save the project to
+persist changes. Search covers names, descriptions, tags, workflow status and notes;
+favorites and archived-project filters help keep the list manageable.
+
+**Queue saved project suites** captures the selected saved suite revisions through the
+existing work queue. It uses the last saved project rather than unsaved form changes.
+Stale project/suite/queue revisions are rejected before work is appended. Archived or
+missing suites must be restored or removed first. Queuing does not automatically start
+a paused queue; a running queue may start the captured work immediately.
+
+Jobs launched this way record the project ID, name and revision at launch, separately
+from model input and scoring. The saved overview automatically finds these jobs even
+after finished queue entries are cleared or the app restarts. **Open saved job** opens
+the existing organizer; **Open launch project** returns to its project. Project notes
+can change later without rewriting the name/revision captured in earlier job records.
+Manual job links can be removed independently. The overview covers loaded history;
+older unloaded jobs are reported rather than replaced with invented results.
+
+**Copy project** makes a new independent project definition with shared manual links;
+it does not duplicate model runs or move previously launched jobs. **Archive project**
+hides the project from the default list without deleting suites, replies or queued work.
+Restore it with **Show archived**. **Export saved overview** includes saved human project
+details, current linked suite definitions, available job references, launch origins and
+unloaded manual IDs. It is an overview, not a new evaluation or a native reply export.
+
+Project data persists in `.projects.json` under the selected reports root. Limits:
+100 projects, a 4 MiB library, ten suite links, 100 manual job links, 30 checklist items,
+an 80-character name, 1,000-character description, 6,000-character notes, and eight tags
+of up to 24 characters. Checklist item text is limited to 200 characters. Revision
+conflicts preserve the editor draft; **Reload saved project** explicitly replaces it
+with the latest saved definition. Corrupt project files are preserved and reported.
+
+`tests/dashboard-projects.browser.mjs` verifies project organization, actual queued
+launch, origin tracking, export, conflict recovery and responsive persistence against
+an isolated dashboard on port 8766. It creates actual local prompt and model-skill jobs;
+use a dedicated reports root. It can reuse its existing completed manual prompt source.
+
 Adapter references: [Ollama API](https://github.com/ollama/ollama/blob/main/docs/api.md),
 [vLLM structured outputs](https://docs.vllm.ai/en/latest/features/structured_outputs/),
 [Transformers chat templates](https://huggingface.co/docs/transformers/main/chat_templating).

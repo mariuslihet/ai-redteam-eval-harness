@@ -8,6 +8,7 @@ import hashlib
 import json
 import threading
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -24,6 +25,7 @@ from redteam_eval.inspection import inspect_pair
 from redteam_eval.model_checks import (
     SKILL_SYSTEM_MESSAGE,
     SkillQuestion,
+    check_json_depth,
     exact_value,
     grade_skill,
     review_skill_results,
@@ -31,6 +33,7 @@ from redteam_eval.model_checks import (
     skill_questions,
     skill_summary,
 )
+from redteam_eval.model_workspace import PromptRequest, prompt_messages, validate_prompt_record
 from redteam_eval.models import (
     BackendConfig,
     GuardConfig,
@@ -267,11 +270,14 @@ def analysis_schema(pair: PairResult) -> tuple[dict[str, Any], list[dict[str, An
 
 class DashboardJob(Model):
     id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    action: Literal["evaluate", "analyze", "replay", "check_model"]
+    action: Literal["evaluate", "analyze", "replay", "check_model", "prompt"]
     status: Literal["queued", "running", "complete", "failed", "cancelled"]
     created_at: str
     updated_at: str
     request: dict[str, Any]
+    project_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    project_title: str | None = Field(default=None, max_length=80)
+    project_revision: int | None = Field(default=None, ge=1)
     config: RunConfig | None = None
     result_id: str | None = None
     result: dict[str, Any] | None = None
@@ -295,6 +301,7 @@ class JobManager:
         self.budget: RunBudget | None = None
         self.runner: Runner | None = None
         self.cancel_requested = False
+        self.on_idle: Callable[[DashboardJob], None] | None = None
         for path in sorted(self.directory.glob("*/job.json"))[-100:]:
             try:
                 path = store.bounded_path(path)
@@ -329,11 +336,30 @@ class JobManager:
                             "failed",
                             f"Saved skill replies could not be recovered: {exc}",
                         )
+                if job.action == "prompt" and job.status in ("running", "queued", "failed"):
+                    try:
+                        saved_prompt = store.bounded_path(path.parent / "prompt-reply.json")
+                        if saved_prompt.exists():
+                            if saved_prompt.stat().st_size > 8 * 1024 * 1024:
+                                raise ValueError("Saved prompt reply exceeds 8 MiB")
+                            content = saved_prompt.read_text(encoding="utf-8")
+                            check_json_depth(content)
+                            record = validate_prompt_record(
+                                json.loads(content), PromptRequest.model_validate(job.request)
+                            )
+                            job.result = record
+                    except (ValueError, OSError, TypeError, KeyError) as exc:
+                        job.status, job.error = (
+                            "failed",
+                            f"Saved prompt evidence could not be recovered: {exc}",
+                        )
                 if job.status in ("running", "queued"):
                     job.status, job.error = (
                         "failed",
                         "Dashboard restarted before the job finished; committed checkpoints remain resumable.",
                     )
+                    if job.action == "prompt":
+                        job.error = "The app restarted before the prompt job finished. Saved replies remain available; start a new request to repeat it."
                     if job.action == "check_model":
                         job.error = "The app restarted before the skill test finished. Saved replies are available; continue the remaining questions with the same settings."
                 self.jobs[job.id] = job
@@ -384,7 +410,14 @@ class JobManager:
         job.updated_at = now()
         atomic_json(path / "job.json", job.model_dump(mode="json"))
 
-    def submit(self, payload: dict[str, Any]) -> DashboardJob:
+    def submit(
+        self,
+        payload: dict[str, Any],
+        *,
+        project_id: str | None = None,
+        project_title: str | None = None,
+        project_revision: int | None = None,
+    ) -> DashboardJob:
         request = (
             ModelCheckRequest.model_validate(payload)
             if payload.get("action") == "check_model"
@@ -392,6 +425,8 @@ class JobManager:
             if payload.get("action") == "replay"
             else AnalysisRequest.model_validate(payload)
             if payload.get("action") == "analyze"
+            else PromptRequest.model_validate(payload)
+            if payload.get("action") == "prompt"
             else EvaluationRequest.model_validate(payload)
         )
         if isinstance(request, EvaluationRequest) and request.seeds is not None:
@@ -413,6 +448,8 @@ class JobManager:
                 raise RuntimeError(
                     "A local model job is already running; finish or cancel it first"
                 )
+            if isinstance(request, PromptRequest):
+                self.prompt_context(request)
             if isinstance(request, ModelCheckRequest) and request.retry_of:
                 parent = self.jobs[request.retry_of]
                 if (
@@ -445,6 +482,9 @@ class JobManager:
                 created_at=now(),
                 updated_at=now(),
                 request=request.model_dump(mode="json"),
+                project_id=project_id,
+                project_title=project_title,
+                project_revision=project_revision,
             )
             if source is not None:
                 directory = self.store.bounded_path(self.directory / job.id)
@@ -759,6 +799,8 @@ class JobManager:
                 await self._replay(job)
             elif job.action == "check_model":
                 await self._check_model(job)
+            elif job.action == "prompt":
+                await self._prompt(job)
             else:
                 async with asyncio.timeout(180):
                     await self._analyze(job)
@@ -791,6 +833,155 @@ class JobManager:
                         None,
                         None,
                     )
+                    if self.on_idle is not None:
+                        self.on_idle(job)
+
+    def prompt_context(self, request: PromptRequest) -> list[Message]:
+        parent = None
+        if request.parent_job_id:
+            job = self.jobs.get(request.parent_job_id)
+            if job is None or job.action != "prompt" or job.status != "complete" or not job.result:
+                raise ValueError("Choose a completed prompt job to continue")
+            parent = copy.deepcopy(job.result)
+        return prompt_messages(request, parent)
+
+    async def _prompt(self, job: DashboardJob) -> None:
+        request = PromptRequest.model_validate(job.request)
+        messages = self.prompt_context(request)
+        config = await self.selected_backend(request.model)
+        config.timeout = min(request.max_run_seconds, 180)
+        if request.expected_digest and request.expected_digest != config.expected_digest:
+            raise ValueError(
+                "The saved model version is no longer installed; load an independent draft"
+            )
+        if (
+            request.parent_job_id
+            and (self.jobs[request.parent_job_id].result or {}).get("model_digest")
+            != config.expected_digest
+        ):
+            raise ValueError("The installed model version changed; start a new conversation")
+        budget = RunBudget(
+            RunConfig(
+                backend=config,
+                max_total_tokens=request.max_total_tokens,
+                max_run_seconds=request.max_run_seconds,
+            )
+        )
+        self.budget = budget
+        record: dict[str, Any] = {
+            "format_version": 1,
+            "kind": "prompt_reply",
+            "settings": request.model_dump(mode="json"),
+            "model": config.model,
+            "model_digest": config.expected_digest,
+            "messages": [row.model_dump(mode="json") for row in messages],
+            "conversation_turn": sum(row.role == "user" for row in messages),
+            "response": None,
+            "status": "running",
+            "interpretation": "Actual local model output, without an automatic correctness grade. Earlier exchanges are included only from unchanged native saved replies. Each turn has separate allowances; conversation context counts toward input usage. No response schema or tools are supplied.",
+        }
+        path = self.store.bounded_path(self.directory / job.id / "prompt-reply.json")
+
+        def persist(status: str) -> None:
+            record["status"] = status
+            job.result = copy.deepcopy(record)
+            atomic_json(path, record)
+            self.save(job)
+
+        try:
+            persist("running")
+            budget.before_request()
+            async with asyncio.timeout(request.max_run_seconds):
+                response = await HTTPBackend(config).generate(
+                    Request(messages=messages, seed=request.seed, max_tokens=request.max_tokens)
+                )
+            record["response"] = response.model_dump(mode="json")
+            persist("running")
+            budget.observe(response.usage)
+            budget.finish("complete")
+            persist("complete")
+        except BaseException as exc:
+            status: Literal["cancelled", "budget_exceeded", "failed"] = (
+                "cancelled"
+                if isinstance(exc, asyncio.CancelledError)
+                else "budget_exceeded"
+                if is_budget_error(exc) or isinstance(exc, TimeoutError)
+                else "failed"
+            )
+            budget.finish(status)
+            persist(status)
+            raise
+
+    async def inspect_model(self, name: str) -> dict[str, Any]:
+        inventory = await self.models()
+        selected = next((row for row in inventory["models"] if row["name"] == name), None)
+        if selected is None:
+            raise ValueError("Choose an installed local completion model")
+        async with httpx.AsyncClient(trust_env=False, follow_redirects=False, timeout=15) as client:
+            result = await client.post(self.endpoint + "/api/show", json={"model": name})
+            result.raise_for_status()
+            data = result.json()
+            loaded, runtime, runtime_error = None, {}, None
+            try:
+                response = await client.get(self.endpoint + "/api/ps")
+                response.raise_for_status()
+                running = response.json().get("models")
+                if not isinstance(running, list):
+                    raise ValueError("Runtime did not provide a loaded-model list")
+                active = next(
+                    (
+                        row
+                        for row in running
+                        if isinstance(row, dict)
+                        and (row.get("name") == name or row.get("model") == name)
+                    ),
+                    None,
+                )
+                loaded = active is not None
+                if active:
+                    runtime = {
+                        key: active[key]
+                        for key in ("size", "size_vram", "context_length", "expires_at")
+                        if key in active
+                    }
+            except (httpx.HTTPError, ValueError, TypeError) as exc:
+                runtime_error = str(exc)
+        information = data.get("model_info", {})
+        architecture = (
+            {
+                key: value
+                for key, value in information.items()
+                if isinstance(value, (str, int, float))
+                and (
+                    key.startswith("general.")
+                    or key.endswith(
+                        (
+                            ".context_length",
+                            ".embedding_length",
+                            ".block_count",
+                            ".attention.head_count",
+                            ".attention.head_count_kv",
+                        )
+                    )
+                )
+            }
+            if isinstance(information, dict)
+            else {}
+        )
+        return {
+            "captured_at": now(),
+            "model": name,
+            "digest": selected.get("digest"),
+            "disk_bytes": selected.get("size"),
+            "capabilities": selected["capabilities"],
+            "details": data.get("details", {}),
+            "architecture": architecture,
+            "loaded": loaded,
+            "runtime": runtime,
+            "runtime_error": runtime_error,
+            "inference_requested": False,
+            "interpretation": "Metadata is reported by the installed local runtime, not an independent capability score. Loaded status is a point-in-time observation; absent fields remain unknown.",
+        }
 
     async def _evaluate(self, job: DashboardJob) -> None:
         request = EvaluationRequest.model_validate(job.request)
